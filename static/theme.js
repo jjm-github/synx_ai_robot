@@ -59,6 +59,53 @@
         return 0.2126 * x.r + 0.7152 * x.g + 0.0722 * x.b;
     }
 
+    function rgbToHsl(c) {
+        var x = hexToRgb(c), r = x.r / 255, g = x.g / 255, b = x.b / 255;
+        var max = Math.max(r, g, b), min = Math.min(r, g, b);
+        var h = 0, s = 0, l = (max + min) / 2;
+        if (max !== min) {
+            var d = max - min;
+            s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+            if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+            else if (max === g) h = (b - r) / d + 2;
+            else h = (r - g) / d + 4;
+            h /= 6;
+        }
+        return {h: h, s: s, l: l};
+    }
+
+    function hslToHex(h, s, l) {
+        function hue(p, q, t) {
+            if (t < 0) t += 1;
+            if (t > 1) t -= 1;
+            if (t < 1 / 6) return p + (q - p) * 6 * t;
+            if (t < 1 / 2) return q;
+            if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+            return p;
+        }
+        var r, g, b;
+        if (s === 0) {
+            r = g = b = l;
+        } else {
+            var q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+            var p = 2 * l - q;
+            r = hue(p, q, h + 1 / 3);
+            g = hue(p, q, h);
+            b = hue(p, q, h - 1 / 3);
+        }
+        return rgbToHex(r * 255, g * 255, b * 255);
+    }
+
+    /* Подсказка в пустом поле: тот же оттенок, что у фона поля,
+       но яркость (HSL lightness) отличается ровно на 20 процентных пунктов.
+       Направление — в сторону текста темы, чтобы подсказка читалась. */
+    function placeholderInk(field, text) {
+        var c = rgbToHsl(field);
+        var step = luma(text) >= luma(field) ? 0.20 : -0.20;
+        var l = Math.max(0.04, Math.min(0.96, c.l + step));
+        return hslToHex(c.h, c.s, l);
+    }
+
     function sat(c) {
         var x = hexToRgb(c);
         return Math.max(x.r, x.g, x.b) - Math.min(x.r, x.g, x.b);
@@ -164,6 +211,7 @@
         var badgeBg = mix(bg, sel, 0.16), badgeInk = mix(sel, ink, 0.35), badgeLine = mix(bg, sel, 0.36);
         var badgeAdminBg = mix(bg, warn, 0.18), badgeAdminInk = mix(warn, ink, 0.30), badgeAdminLine = mix(bg, warn, 0.42);
         var badgeArtistBg = mix(bg, ok, 0.16), badgeArtistInk = mix(ok, ink, 0.25), badgeArtistLine = mix(bg, ok, 0.42);
+        var placeholder = placeholderInk(field, text);
         var errorBg = mix(bg, danger, 0.14), errorLine = mix(bg, danger, 0.42);
         var noticeBg = mix(bg, ok, 0.14), noticeLine = mix(bg, ok, 0.42);
         var flashBg = noticeBg, flashLine = noticeLine;
@@ -203,6 +251,7 @@
             "--warn": warn,
             "--danger": danger,
             "--field-bg": fieldBg,
+            "--placeholder": placeholder,
             "--zone-bg": zoneBg,
             "--zone-over": zoneOver,
             "--tab-bg": tabBg,
