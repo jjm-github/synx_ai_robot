@@ -513,7 +513,7 @@
   async function loadPublications() {
     try {
       var st = $("pub-status").value;
-      var d = await api("/api/publications" + (st ? "?status=" + encodeURIComponent(st) : ""));
+      var d = await api("/api/publications?limit=5000" + (st ? "&status=" + encodeURIComponent(st) : ""));
       state.pubs = d.publications || [];
       renderPublications();
     } catch (e) { toast("Публикации: " + e.message, true); }
@@ -523,8 +523,8 @@
     return '<span class="badge ' + (map[s] || "") + '">' + esc(s || "") + "</span>";
   }
   function actionBadge(p) {
-    if (p.needs_action === 1) return '<span class="badge bad">действие</span>';
-    if (p.needs_action === 0) return '<span class="badge ok">без действия</span>';
+    if (p.needs_action === 1) return '<span class="badge bad">продолжение</span>';
+    if (p.needs_action === 0) return '<span class="badge ok">версия</span>';
     return '<span class="badge warn">не разобрано</span>';
   }
   function renderPublications() {
@@ -533,7 +533,7 @@
     state.pubs.forEach(function (p) {
       var tr = document.createElement("tr");
       tr.dataset.id = p.id;
-      tr.dataset.action = p.needs_action === 1 ? "action" : (p.needs_action === 0 ? "noaction" : "unknown");
+      tr.dataset.action = p.needs_action === 1 ? "continuation" : (p.needs_action === 0 ? "version" : "unknown");
       tr.dataset.images = (p.attachments || []).length ? "1" : "0";
       tr.dataset.hay = [p.project_alias, p.shot, p.thread_kind, p.version_number, p.author, p.body].join(" ").toLowerCase();
       var att = (p.attachments || []).map(function (a) {
@@ -564,11 +564,11 @@
     Array.prototype.forEach.call($("pub-table").tBodies[0].rows, function (tr) {
       var ok = true;
       if (q && (tr.dataset.hay || "").indexOf(q) === -1) ok = false;
-      if (action === "action" && tr.dataset.action !== "action") ok = false;
-      if (action === "noaction" && tr.dataset.action !== "noaction") ok = false;
+      if (action === "continuation" && tr.dataset.action !== "continuation") ok = false;
+      if (action === "version" && tr.dataset.action !== "version") ok = false;
       if (action === "unknown" && tr.dataset.action !== "unknown") ok = false;
       if (action === "images" && tr.dataset.images !== "1") ok = false;
-      if (!showNoAction && tr.dataset.action === "noaction") ok = false;
+      if (!showNoAction && tr.dataset.action === "version") ok = false;
       tr.style.display = ok ? "" : "none";
     });
   }
@@ -595,6 +595,14 @@
   $("pub-show-noaction").addEventListener("change", applyPubFilters);
   $("pub-status").addEventListener("change", loadPublications);
   $("pub-refresh").addEventListener("click", loadPublications);
+  $("pub-reclassify").addEventListener("click", async function () {
+    if (!confirm("Переанализировать всю таблицу публикаций? Версии будут помечены как «просто версия», требующие правок — как «продолжение».")) return;
+    try {
+      var d = await api("/api/publications/reclassify?ai=true", { method: "POST" });
+      toast("Разметка: версий " + d.counts.version + ", продолжений " + d.counts.continuation + ", AI в очереди " + d.ai_queued);
+      await loadPublications();
+    } catch (e) { toast(e.message, true); }
+  });
   $("pub-analyze-batch").addEventListener("click", async function () {
     if (!confirm("Поставить в AI-разметку все неразобранные комментарии? Это может занять время и токены.")) return;
     try {

@@ -20,6 +20,7 @@ import db
 from ai import AIClient, AIError
 from config import DATA_DIR, ROOT, load_bots, load_config, save_bots, save_config, save_system_prompt
 from paths import render_dir, task_work_dir
+from classify import classify_publication
 from links import task_version_url
 from plan_md import save_plan_markdown
 from chat import (IMAGES as CHAT_IMAGES, UPLOADS as CHAT_UPLOADS,
@@ -105,6 +106,8 @@ def _analyze_publication(pid: int) -> dict[str, Any]:
         analysis_md=md,
         analysis_md_path=md_path,
         needs_action=needs,
+        publication_type="continuation" if needs else "version",
+        analysis_source="ai",
         analysis_tokens=int(usage.get("input") or 0) + int(usage.get("output") or 0),
     )
     return plan
@@ -252,7 +255,7 @@ def synx_scan(body: ScanBody):
 
 
 @app.get("/api/publications")
-def publications(status: str | None = None, limit: int = 200):
+def publications(status: str | None = None, limit: int = 5000):
     return {"publications": db.list_publications(status, limit)}
 
 
@@ -264,6 +267,32 @@ def analyze_publication(pid: int):
         db.update_publication(pid, status="analysis_error")
         raise HTTPException(400, str(exc))
     return {"ok": True, "plan": plan}
+
+
+@app.post("/api/publications/reclassify")
+def reclassify_publications(ai: bool = True):
+    rows = db.list_publications(limit=5000)
+    counts = {"version": 0, "continuation": 0, "unknown": 0, "needs_ai": 0}
+    need_ai: list[int] = []
+    for pub in rows:
+        c = classify_publication(pub)
+        db.update_publication(
+            pub["id"],
+            needs_action=c["needs_action"],
+            publication_type=c["publication_type"],
+            analysis_source=c["source"],
+        )
+        key = c["publication_type"] if c["publication_type"] in counts else "unknown"
+        counts[key] = counts.get(key, 0) + 1
+        if c["source"] == "needs_ai":
+            need_ai.append(int(pub["id"]))
+    counts["needs_ai"] = len(need_ai)
+    if ai and need_ai and AIClient().ready:
+        threading.Thread(target=_auto_analyze, args=(need_ai,), daemon=True,
+                         name="synx-reclassify-ai").start()
+    elif ai and need_ai and not AIClient().ready:
+        counts["needs_ai"] = len(need_ai)
+    return {"ok": True, "counts": counts, "ai_queued": len(need_ai) if ai and AIClient().ready else 0}
 
 
 @app.post("/api/publications/analyze-batch")

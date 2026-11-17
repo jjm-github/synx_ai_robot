@@ -46,6 +46,8 @@ def init() -> None:
                 analysis_md TEXT,
                 analysis_md_path TEXT,
                 needs_action INTEGER,
+                publication_type TEXT,
+                analysis_source TEXT,
                 analysis_tokens INTEGER DEFAULT 0,
                 created_db TEXT NOT NULL,
                 updated_db TEXT NOT NULL
@@ -135,7 +137,8 @@ def init() -> None:
                 c.execute(f"ALTER TABLE tasks ADD COLUMN {col} {typ}")
         pcols = {r["name"] for r in c.execute("PRAGMA table_info(publications)").fetchall()}
         for col, typ in (("analysis_md", "TEXT"), ("analysis_md_path", "TEXT"),
-                         ("needs_action", "INTEGER")):
+                         ("needs_action", "INTEGER"), ("publication_type", "TEXT"),
+                         ("analysis_source", "TEXT")):
             if col not in pcols:
                 c.execute(f"ALTER TABLE publications ADD COLUMN {col} {typ}")
         ccols = {r["name"] for r in c.execute("PRAGMA table_info(chat_messages)").fetchall()}

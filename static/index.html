@@ -56,12 +56,13 @@
         </select>
         <select class="input" id="pub-action">
           <option value="">все события</option>
-          <option value="action">требуют действия</option>
-          <option value="noaction">без действия</option>
+          <option value="continuation">с продолжением</option>
+          <option value="version">просто версия</option>
           <option value="unknown">не разобрано</option>
           <option value="images">с картинками</option>
         </select>
-        <label class="check inline-check"><input type="checkbox" id="pub-show-noaction" checked> Показывать без действия</label>
+        <label class="check inline-check"><input type="checkbox" id="pub-show-noaction" checked> Показывать версии</label>
+        <button class="btn" id="pub-reclassify">Переанализировать всё</button>
         <button class="btn" id="pub-analyze-batch">Разметить AI</button>
         <button class="btn" id="pub-refresh">Обновить</button>
       </div>
@@ -77,7 +78,7 @@
               <th data-col="body">Комментарий</th>
               <th data-col="attachments">Референсы</th>
               <th data-col="status">Статус</th>
-              <th data-col="action">Анализ</th>
+              <th data-col="action">Тип публикации</th>
               <th data-col="actions">Действия</th>
             </tr>
           </thead>
