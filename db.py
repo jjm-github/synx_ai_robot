@@ -183,16 +183,21 @@ def add_publication(pub: dict[str, Any]) -> int | None:
                 """INSERT INTO publications
                    (project_id, project_alias, entity_id, shot, thread_kind, task_id,
                     version_id, version_number, comment_id, author, body, created_at,
-                    attachments_json, status, answered_by_version, answer_version_number,
-                    answer_version_code, created_db, updated_db)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    attachments_json, status, needs_action, publication_type, analysis_source,
+                    answered_by_version, answer_version_number, answer_version_code,
+                    created_db, updated_db)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     pub.get("project_id"), pub.get("project_alias"), pub.get("entity_id"),
                     pub.get("shot"), pub.get("thread_kind"), pub.get("task_id"),
                     pub.get("version_id"), pub.get("version_number"), pub["comment_id"],
                     pub.get("author"), pub.get("body"), pub.get("created_at"),
                     json.dumps(pub.get("attachments") or [], ensure_ascii=False),
-                    pub.get("status", "new"), int(pub.get("answered_by_version") or 0),
+                    pub.get("status", "new"),
+                    0 if pub.get("answered_by_version") else None,
+                    "version" if pub.get("answered_by_version") else None,
+                    "reply" if pub.get("answered_by_version") else None,
+                    int(pub.get("answered_by_version") or 0),
                     pub.get("answer_version_number"), pub.get("answer_version_code"),
                     now(), now(),
                 ),
@@ -213,13 +218,15 @@ def sync_publication_answer(comment_id: str, answered: bool, version_number: int
                    needs_action=0, publication_type='version', analysis_source='reply',
                    updated_db=?
                WHERE comment_id=?
-                 AND (answered_by_version IS NOT 1 OR answer_version_number IS NOT ?)""",
+                 AND (answered_by_version IS NOT 1 OR answer_version_number IS NOT ?
+                      OR needs_action IS NOT 0 OR publication_type IS NOT 'version')""",
             (version_number, version_code, now(), comment_id, version_number),
         )
     else:
         execute(
             """UPDATE publications
                SET answered_by_version=0, answer_version_number=NULL, answer_version_code=NULL,
+                   needs_action=NULL, publication_type=NULL, analysis_source=NULL,
                    updated_db=?
                WHERE comment_id=? AND answered_by_version=1""",
             (now(), comment_id),
