@@ -28,6 +28,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "scan_workers": 12,
         "include_task_comments": True,
         "auto_scan": True,
+        "auto_analyze": True,
         "scan_interval_sec": 300,
     },
     "comfy": {

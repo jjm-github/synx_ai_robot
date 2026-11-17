@@ -45,6 +45,14 @@ class DesktopApi:
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
+    def open_url(self, url: str):
+        try:
+            import webbrowser
+            webbrowser.open(url)
+            return {"ok": True}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
     def copy_chat_image(self, data_url: str):
         raw = self._decode(data_url)
         try:

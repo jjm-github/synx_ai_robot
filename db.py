@@ -45,6 +45,7 @@ def init() -> None:
                 analysis_json TEXT,
                 analysis_md TEXT,
                 analysis_md_path TEXT,
+                needs_action INTEGER,
                 analysis_tokens INTEGER DEFAULT 0,
                 created_db TEXT NOT NULL,
                 updated_db TEXT NOT NULL
@@ -133,7 +134,8 @@ def init() -> None:
             if col not in cols:
                 c.execute(f"ALTER TABLE tasks ADD COLUMN {col} {typ}")
         pcols = {r["name"] for r in c.execute("PRAGMA table_info(publications)").fetchall()}
-        for col, typ in (("analysis_md", "TEXT"), ("analysis_md_path", "TEXT")):
+        for col, typ in (("analysis_md", "TEXT"), ("analysis_md_path", "TEXT"),
+                         ("needs_action", "INTEGER")):
             if col not in pcols:
                 c.execute(f"ALTER TABLE publications ADD COLUMN {col} {typ}")
         ccols = {r["name"] for r in c.execute("PRAGMA table_info(chat_messages)").fetchall()}
@@ -166,11 +168,11 @@ def execute(sql: str, params: Iterable[Any] = ()) -> int:
         return int(cur.lastrowid or 0)
 
 
-def add_publication(pub: dict[str, Any]) -> bool:
-    """Insert if comment_id is new. Returns True when inserted."""
+def add_publication(pub: dict[str, Any]) -> int | None:
+    """Insert if comment_id is new. Returns new row id or None."""
     with connect() as c:
         try:
-            c.execute(
+            cur = c.execute(
                 """INSERT INTO publications
                    (project_id, project_alias, entity_id, shot, thread_kind, task_id,
                     version_id, version_number, comment_id, author, body, created_at,
@@ -186,9 +188,9 @@ def add_publication(pub: dict[str, Any]) -> bool:
                 ),
             )
             c.commit()
-            return True
+            return int(cur.lastrowid or 0)
         except sqlite3.IntegrityError:
-            return False
+            return None
 
 
 def list_publications(status: str | None = None, limit: int = 200) -> list[dict[str, Any]]:

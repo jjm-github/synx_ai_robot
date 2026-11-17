@@ -83,12 +83,49 @@ def _project_for(client: SynxClient, project_id: str | None = None, alias: str |
 
 
 
+def _analyze_publication(pid: int) -> dict[str, Any]:
+    pub = db.get_publication(pid)
+    if not pub:
+        raise ValueError("publication not found")
+    cfg = load_config()
+    client = _synx()
+    project = _project_for(client, project_id=pub["project_id"])
+    try:
+        task_types = client.task_types(pub["project_id"])
+    except Exception:
+        task_types = []
+    plan = AIClient(cfg).analyze_publication(pub, project, task_types, load_bots(), client)
+    usage = plan.get("_usage") or {}
+    md, md_path = save_plan_markdown(plan, pub)
+    needs = 1 if plan.get("needs_task", True) else 0
+    db.update_publication(
+        pid,
+        status="analyzed" if needs else "no_task",
+        analysis_json=json.dumps(plan, ensure_ascii=False),
+        analysis_md=md,
+        analysis_md_path=md_path,
+        needs_action=needs,
+        analysis_tokens=int(usage.get("input") or 0) + int(usage.get("output") or 0),
+    )
+    return plan
+
+
+def _auto_analyze(ids: list[int]) -> None:
+    for pid in ids:
+        try:
+            _analyze_publication(pid)
+        except Exception as exc:
+            db.update_publication(pid, status="analysis_error")
+            db.add_event(None, "analysis_error", f"publication {pid}: {exc}")
+
+
 def _scan_once(projects: list[str] | None = None) -> dict[str, Any]:
     cfg = load_config()
     aliases = projects or cfg["synx"].get("projects") or []
     client = _synx()
     total = inserted = 0
     detail = []
+    new_ids: list[int] = []
     for alias in aliases:
         recs = client.scan_project(
             alias,
@@ -98,12 +135,19 @@ def _scan_once(projects: list[str] | None = None) -> dict[str, Any]:
         total += len(recs)
         n = 0
         for rec in recs:
-            if db.add_publication(rec):
+            new_id = db.add_publication(rec)
+            if new_id:
                 n += 1
+                new_ids.append(new_id)
         inserted += n
         detail.append({"project": alias, "comments": len(recs), "new": n})
     db.set_meta("last_scan", db.now())
-    return {"ok": True, "comments": total, "new": inserted, "detail": detail}
+    ready = AIClient(cfg).ready
+    if new_ids and cfg["synx"].get("auto_analyze", True) and ready:
+        threading.Thread(target=_auto_analyze, args=(new_ids,), daemon=True,
+                         name="synx-autoclassify").start()
+    return {"ok": True, "comments": total, "new": inserted, "detail": detail,
+            "auto_analyze": len(new_ids) if (cfg["synx"].get("auto_analyze", True) and ready) else 0}
 
 
 def _scanner_loop() -> None:
@@ -214,32 +258,24 @@ def publications(status: str | None = None, limit: int = 200):
 
 @app.post("/api/publications/{pid}/analyze")
 def analyze_publication(pid: int):
-    pub = db.get_publication(pid)
-    if not pub:
-        raise HTTPException(404, "publication not found")
-    cfg = load_config()
-    client = _synx()
-    project = _project_for(client, project_id=pub["project_id"])
     try:
-        task_types = client.task_types(pub["project_id"])
-    except Exception:
-        task_types = []
-    try:
-        plan = AIClient(cfg).analyze_publication(pub, project, task_types, load_bots(), client)
+        plan = _analyze_publication(pid)
     except Exception as exc:
         db.update_publication(pid, status="analysis_error")
         raise HTTPException(400, str(exc))
-    usage = plan.get("_usage") or {}
-    md, md_path = save_plan_markdown(plan, pub)
-    db.update_publication(
-        pid,
-        status="analyzed" if plan.get("needs_task", True) else "no_task",
-        analysis_json=json.dumps(plan, ensure_ascii=False),
-        analysis_md=md,
-        analysis_md_path=md_path,
-        analysis_tokens=int(usage.get("input") or 0) + int(usage.get("output") or 0),
-    )
     return {"ok": True, "plan": plan}
+
+
+@app.post("/api/publications/analyze-batch")
+def analyze_batch(limit: int = 100):
+    rows = db.all("SELECT id FROM publications WHERE analysis_json IS NULL ORDER BY id ASC LIMIT ?", (limit,))
+    ids = [int(r["id"]) for r in rows]
+    if ids and not AIClient().ready:
+        raise HTTPException(400, "AI provider is not configured")
+    if ids:
+        threading.Thread(target=_auto_analyze, args=(ids,), daemon=True,
+                         name="synx-autoclassify").start()
+    return {"ok": True, "queued": len(ids)}
 
 
 @app.post("/api/publications/{pid}/create-task")

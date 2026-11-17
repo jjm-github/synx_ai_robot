@@ -54,6 +54,15 @@
           <option value="no_task">без задачи</option>
           <option value="analysis_error">ошибка анализа</option>
         </select>
+        <select class="input" id="pub-action">
+          <option value="">все события</option>
+          <option value="action">требуют действия</option>
+          <option value="noaction">без действия</option>
+          <option value="unknown">не разобрано</option>
+          <option value="images">с картинками</option>
+        </select>
+        <label class="check inline-check"><input type="checkbox" id="pub-show-noaction" checked> Показывать без действия</label>
+        <button class="btn" id="pub-analyze-batch">Разметить AI</button>
         <button class="btn" id="pub-refresh">Обновить</button>
       </div>
       <div class="table-wrap">
@@ -68,6 +77,7 @@
               <th data-col="body">Комментарий</th>
               <th data-col="attachments">Референсы</th>
               <th data-col="status">Статус</th>
+              <th data-col="action">Анализ</th>
               <th data-col="actions">Действия</th>
             </tr>
           </thead>
@@ -111,6 +121,7 @@
               <th data-col="progress">Прогресс</th>
               <th data-col="tokens">Токены</th>
               <th data-col="time">Время</th>
+              <th data-col="version">Версия</th>
               <th data-col="updated">Обновлено</th>
               <th data-col="actions">Действия</th>
             </tr>
@@ -178,6 +189,7 @@
           </div>
           <div class="row2">
             <label class="check"><input type="checkbox" id="synx-auto-scan"> Автосканирование</label>
+            <label class="check"><input type="checkbox" id="synx-auto-analyze"> Авто-разметка AI</label>
             <label class="check"><input type="checkbox" id="synx-task-comments"> Комментарии задач</label>
           </div>
         </div>

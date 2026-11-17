@@ -344,7 +344,7 @@
         root.removeAttribute("data-accent");
         var light = isLight(colors.bg);
         root.setAttribute("data-theme-mode", light ? "light" : "dark");
-        root.style.colorScheme = light ? "light" : "dark";
+        root.style.colorScheme = "normal";
     }
 
     /* Тема хранится и на сервере (users.ui_state): куки свои у каждого

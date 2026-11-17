@@ -398,6 +398,7 @@
     $("synx-scan").value = sx.scan_interval_sec || 180;
     $("synx-workers").value = sx.scan_workers || 12;
     $("synx-auto-scan").checked = sx.auto_scan !== false;
+    $("synx-auto-analyze").checked = sx.auto_analyze !== false;
     $("synx-task-comments").checked = !!sx.include_task_comments;
     $("comfy-root").value = co.root || "";
     $("comfy-base").value = co.base_url || "";
@@ -433,6 +434,7 @@
     c.synx.scan_interval_sec = Number($("synx-scan").value || 180);
     c.synx.scan_workers = Number($("synx-workers").value || 12);
     c.synx.auto_scan = $("synx-auto-scan").checked;
+    c.synx.auto_analyze = $("synx-auto-analyze").checked;
     c.synx.include_task_comments = $("synx-task-comments").checked;
     c.comfy.root = $("comfy-root").value.trim();
     c.comfy.base_url = $("comfy-base").value.trim();
@@ -520,12 +522,20 @@
     var map = { "new": "info", "analyzed": "warn", "task_created": "ok", "no_task": "", "analysis_error": "bad" };
     return '<span class="badge ' + (map[s] || "") + '">' + esc(s || "") + "</span>";
   }
+  function actionBadge(p) {
+    if (p.needs_action === 1) return '<span class="badge bad">действие</span>';
+    if (p.needs_action === 0) return '<span class="badge ok">без действия</span>';
+    return '<span class="badge warn">не разобрано</span>';
+  }
   function renderPublications() {
     var tb = $("pub-table").tBodies[0];
     tb.innerHTML = "";
     state.pubs.forEach(function (p) {
       var tr = document.createElement("tr");
       tr.dataset.id = p.id;
+      tr.dataset.action = p.needs_action === 1 ? "action" : (p.needs_action === 0 ? "noaction" : "unknown");
+      tr.dataset.images = (p.attachments || []).length ? "1" : "0";
+      tr.dataset.hay = [p.project_alias, p.shot, p.thread_kind, p.version_number, p.author, p.body].join(" ").toLowerCase();
       var att = (p.attachments || []).map(function (a) {
         return '<a class="link" target="_blank" href="' + esc(a.url || ("/files/" + a.file_id)) + '">' + esc(a.name || "file") + "</a>";
       }).join("<br>");
@@ -538,13 +548,29 @@
         '<td class="wrap" title="' + esc(p.body || "") + '">' + esc((p.body || "").replace(/\n/g, " ").slice(0, 260)) + "</td>" +
         '<td class="wrap">' + att + "</td>" +
         '<td>' + pubBadge(p.status) + "</td>" +
+        '<td>' + actionBadge(p) + "</td>" +
         '<td><button class="btn" data-pub-analyze="' + p.id + '">AI</button> ' +
         '<button class="btn" data-pub-details="' + p.id + '" title="Открыть план .md">MD</button></td>';
       tb.appendChild(tr);
     });
     RobotTables.refresh($("pub-table"));
-    RobotTables.filter($("pub-table"), $("pub-filter").value);
+    applyPubFilters();
     updatePubSelected();
+  }
+  function applyPubFilters() {
+    var q = ($("pub-filter").value || "").trim().toLowerCase();
+    var action = $("pub-action").value;
+    var showNoAction = $("pub-show-noaction").checked;
+    Array.prototype.forEach.call($("pub-table").tBodies[0].rows, function (tr) {
+      var ok = true;
+      if (q && (tr.dataset.hay || "").indexOf(q) === -1) ok = false;
+      if (action === "action" && tr.dataset.action !== "action") ok = false;
+      if (action === "noaction" && tr.dataset.action !== "noaction") ok = false;
+      if (action === "unknown" && tr.dataset.action !== "unknown") ok = false;
+      if (action === "images" && tr.dataset.images !== "1") ok = false;
+      if (!showNoAction && tr.dataset.action === "noaction") ok = false;
+      tr.style.display = ok ? "" : "none";
+    });
   }
   function updatePubSelected() {
     var sel = RobotTables.selected($("pub-table"));
@@ -564,9 +590,18 @@
     if (e.target.closest("a,button,input")) return;
     updatePubSelected();
   });
-  $("pub-filter").addEventListener("input", function () { RobotTables.filter($("pub-table"), this.value); });
+  $("pub-filter").addEventListener("input", applyPubFilters);
+  $("pub-action").addEventListener("change", applyPubFilters);
+  $("pub-show-noaction").addEventListener("change", applyPubFilters);
   $("pub-status").addEventListener("change", loadPublications);
   $("pub-refresh").addEventListener("click", loadPublications);
+  $("pub-analyze-batch").addEventListener("click", async function () {
+    if (!confirm("Поставить в AI-разметку все неразобранные комментарии? Это может занять время и токены.")) return;
+    try {
+      var d = await api("/api/publications/analyze-batch?limit=200", { method: "POST" });
+      toast("В разметку поставлено: " + d.queued);
+    } catch (e) { toast(e.message, true); }
+  });
 
   async function analyzeOne(id) {
     toast("AI анализирует комментарий...");
@@ -652,6 +687,7 @@
         '<td data-cell="progress"><div class="progress" title="' + pct + '%"><i style="width:' + pct + '%"></i></div></td>' +
         '<td data-cell="tokens" class="num">' + (Number(t.tokens_in || 0) + Number(t.tokens_out || 0)) + "</td>" +
         '<td data-cell="time" class="num">' + fmtSec(t.elapsed_sec) + "</td>" +
+        '<td>' + (t.synx_url ? '<a class="link" href="' + esc(t.synx_url) + '" data-open-url="' + esc(t.synx_url) + '">' + esc(t.version_code || "открыть") + "</a>" : "—") + "</td>" +
         '<td data-cell="updated">' + fmtTime(t.updated_at) + "</td>" +
         '<td><button class="btn" data-task-open="' + t.id + '">Папка</button></td>';
       tb.appendChild(tr);
@@ -666,6 +702,12 @@
     if (el) el.checked = n > 0 && n === $("task-table").tBodies[0].rows.length;
   }
   $("task-table").addEventListener("click", function (e) {
+    var ext = e.target.closest("[data-open-url]");
+    if (ext) {
+      e.preventDefault();
+      openExternal(ext.dataset.openUrl);
+      return;
+    }
     var o = e.target.closest("[data-task-open]");
     if (o) { openFolder(Number(o.dataset.taskOpen)); return; }
     if (e.target.closest("button,input,a")) return;
@@ -686,6 +728,15 @@
     try { var d = await api("/api/tasks/delete-done", { method: "POST" }); toast("Удалено: " + d.deleted); await loadTasks(); }
     catch (e) { toast(e.message, true); }
   });
+
+  function openExternal(url) {
+    if (!url) return;
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.open_url) {
+      window.pywebview.api.open_url(url).then(function () {}, function () { window.open(url, "_blank"); });
+    } else {
+      window.open(url, "_blank");
+    }
+  }
 
   async function openFolder(id) {
     try { var d = await api("/api/tasks/" + id + "/open-folder", { method: "POST" }); toast("Открыто: " + d.path); }
