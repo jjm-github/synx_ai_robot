@@ -125,6 +125,24 @@ Daily PDF (базовый навык):
   «текст на 20% меньше», `image_valign=center` при «по центру/по вертикали»,
   `background=#000000` для чёрных страниц.
 
+## ComfyUI MCP
+
+Включён `comfyui-mcp` (artokun/comfyui-mcp, 41 инструмент):
+
+- `create_workflow` — create/modify/validate workflow JSON по шаблонам
+  (txt2img, img2img, upscale, inpaint, controlnet, ip_adapter, ltx_video);
+- `download_model` — search HuggingFace/CivitAI, download_model/download_civitai,
+  target_subfolder `checkpoints`, `loras`, `vae`, `diffusion_models`, ...;
+- `list_local_models` — установленные модели и LoRA;
+- `search_custom_nodes` / `install_custom_node`;
+- `get_workflow` / `save_workflow` / `visualize_workflow`.
+
+Вызов: `mcp_list_tools` (server=comfyui-mcp), затем `mcp_call` с tool и
+arguments; для схемы — `mcp_call` tool=describe_tool. Это лучший вариант для
+генерации воркфлоу и скачивания моделей/LoRA. Альтернативы: официальный
+`Comfy-Org/comfy-mcp` (локальный контроль и download по URL, без CivitAI-поиска)
+и `ConstantineB6/comfy-pilot` (редактирование live-графа, без загрузки моделей).
+
 ## ffmpeg
 
 ffmpeg/ffprobe установлены и являются базовыми инструментами для видео. Для

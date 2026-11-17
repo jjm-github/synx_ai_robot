@@ -244,10 +244,18 @@ README — лежат под задачей, в папке бота, назна�
 ### ffmpeg и MCP
 
 `ffmpeg`/`ffprobe` установлены и являются базовыми инструментами: нарезка,
-склейка, кадры, слайдшоу, проверка видео — прямыми вызовами. MCP-серверы
-можно искать/устанавливать/редактировать в приложении, но рантайм-вызов
-MCP-инструментов пока не реализован. Для PDF и ffmpeg это не требуется:
-встроенные вызовы проще и надёжнее.
+склейка, кадры, слайдшоу, проверка видео — прямыми вызовами. MCP-серверы можно искать/устанавливать/редактировать в приложении, а включённые
+серверы вызываются из чата через `mcp_list_tools` / `mcp_call`.
+
+Для ComfyUI включён **`artokun/comfyui-mcp`** — 41 инструмент:
+`create_workflow` (create/modify/validate), `download_model` (HuggingFace/CivitAI,
+checkpoints/loras/vae), `list_local_models`, `search_custom_nodes`,
+`install_custom_node`, `get_workflow`, `save_workflow`, `visualize_workflow`.
+Для видео — `ffmpeg-skill` MCP (`probe`, `cut`, `fit`, `caption`, `graphics`).
+Для PDF проще прямой PIL-пайплайн.
+
+Альтернативы ComfyUI MCP: официальный `Comfy-Org/comfy-mcp` (локальный контроль,
+download по URL) и `ConstantineB6/comfy-pilot` (редактирование live-графа).
 
 ## Synx API для робота
 

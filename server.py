@@ -26,7 +26,8 @@ import mcp_manager
 from links import task_version_url
 from plan_md import save_plan_markdown
 from chat import (IMAGES as CHAT_IMAGES, UPLOADS as CHAT_UPLOADS,
-                  chat_turn, generate_image, get_chat_job, start_chat_job)
+                  chat_turn, chat_export_markdown, generate_image,
+                  get_chat_job, start_chat_job)
 from pipeline import manager
 from synx import SynxClient, SynxError
 
@@ -57,6 +58,11 @@ class AnalyzeBody(BaseModel):
 
 class CreateTaskBody(BaseModel):
     plan: dict[str, Any] | None = None
+
+
+class ChatContextBody(BaseModel):
+    session_id: str = "default"
+    markdown: str = ""
 
 
 class ChatSendBody(BaseModel):
@@ -619,6 +625,23 @@ def chat_session_delete(session_id: str):
 @app.get("/api/chat/messages")
 def chat_messages(session_id: str = "default"):
     return {"messages": db.list_chat_messages(session_id)}
+
+
+@app.get("/api/chat/export")
+def chat_export(session_id: str = "default"):
+    return chat_export_markdown(session_id)
+
+
+@app.post("/api/chat/context")
+def chat_context_set(body: ChatContextBody):
+    db.set_chat_context(body.session_id or "default", body.markdown or "")
+    return {"ok": True, "length": len(body.markdown or "")}
+
+
+@app.delete("/api/chat/context")
+def chat_context_clear(session_id: str = "default"):
+    db.set_chat_context(session_id, "")
+    return {"ok": True}
 
 
 @app.post("/api/chat/send")

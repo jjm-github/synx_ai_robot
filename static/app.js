@@ -74,6 +74,46 @@
     }
     return esc(text).replace(/\n/g, "<br>");
   }
+  function messageMarkdown(m) {
+    var md = String((m && m.content) || "");
+    if (m && m.role === "user" && (m.images || []).length) {
+      md += "\n";
+      (m.images || []).forEach(function (im) {
+        var url = im.url || ("/api/chat/file/uploads/" + (im.name || ""));
+        md += "\n![" + (im.name || "image") + "](" + url + ")";
+        if (im.path) md += "\nФайл: `" + im.path + "`";
+      });
+    }
+    return md;
+  }
+  async function exportChat() {
+    try {
+      var d = await api("/api/chat/export?session_id=" + encodeURIComponent(chatSession));
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.save_text_file) {
+        var r = await window.pywebview.api.save_text_file(d.markdown, d.filename);
+        if (r && r.ok) toast("Экспортировано: " + r.path);
+        else if (r && !r.cancelled) toast("Экспорт: " + (r.error || "ошибка"), true);
+      } else {
+        var blob = new Blob([d.markdown], {type: "text/markdown;charset=utf-8"});
+        var a = document.createElement("a");
+        a.href = URL.createObjectURL(blob); a.download = d.filename; a.click();
+        setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+      }
+    } catch (e) { toast("Экспорт: " + e.message, true); }
+  }
+  $("chat-export").addEventListener("click", exportChat);
+  $("chat-context").addEventListener("click", function () { $("chat-context-file").click(); });
+  $("chat-context-file").addEventListener("change", async function () {
+    var f = this.files && this.files[0];
+    if (!f) return;
+    try {
+      var text = await f.text();
+      var d = await api("/api/chat/context", {method: "POST",
+        body: JSON.stringify({session_id: chatSession, markdown: text})});
+      toast("Контекст загружен: " + d.length + " символов");
+      this.value = "";
+    } catch (e) { toast("Контекст: " + e.message, true); }
+  });
   function chatImageHtml(im, generated) {
     var url = im.url || ("/api/chat/file/images/" + im.name);
     return '<img src="' + esc(url) + '" data-chat-image="1" data-title="' + esc(im.name || "image") + '" alt="">';
@@ -89,6 +129,7 @@
       var isUser = m.role === "user";
       var wrap = document.createElement("div");
       wrap.className = "msg " + (isUser ? "user" : "assistant");
+      wrap.__msg = m;
       var imgs = (isUser ? m.images : m.generated) || [];
       var imgHtml = imgs.length ? '<div class="msg-images">' + imgs.map(function (im) { return chatImageHtml(im, !isUser); }).join("") + "</div>" : "";
       var textHtml = isUser ? '<div class="msg-text">' + esc(m.content || "").replace(/\n/g, "<br>") + "</div>" : '<div class="msg-text markdown-body">' + mdHtml(m.content || "") + "</div>";
@@ -308,14 +349,25 @@
     if (!txt) return;
     e.preventDefault();
     var text = (txt.innerText || txt.textContent || "").trim();
-    if (!text) return;
     var isUser = msg.classList.contains("user");
-    openContextMenu(e.clientX, e.clientY, [
-      { label: isUser ? "Копировать запрос" : "Копировать ответ", fn: function () { copyText(text); } },
-      { label: "Копировать как цитату", fn: function () {
+    var items = [];
+    var link = e.target.closest("a[href]");
+    if (link) {
+      var href = link.getAttribute("href") || "";
+      items.push({label: "Копировать ссылку", fn: function () { copyText(href); }});
+      items.push({label: "Открыть ссылку", fn: function () { openHref(href); }});
+      items.push({sep: true});
+    }
+    items.push({label: "Копировать сообщение (.md)", fn: function () { copyText(messageMarkdown(msg.__msg || {})); }});
+    if (text) {
+      items.push({label: isUser ? "Копировать запрос" : "Копировать ответ", fn: function () { copyText(text); }});
+      items.push({label: "Копировать как цитату", fn: function () {
         copyText(text.split("\n").map(function (line) { return "> " + line; }).join("\n"));
-      } }
-    ]);
+      }});
+    }
+    items.push({sep: true});
+    items.push({label: "Экспортировать чат в .md", fn: exportChat});
+    openContextMenu(e.clientX, e.clientY, items);
   });
 
   // ---------- MCP / skills ----------
@@ -958,6 +1010,20 @@
     return (state.config && state.config.synx && state.config.synx.base_url)
       ? String(state.config.synx.base_url).replace(/\/$/, "") : "https://synks.ru";
   }
+  function openHref(href) {
+    if (!href) return;
+    if (href.indexOf("http://") === 0 || href.indexOf("https://") === 0 || href.indexOf("mailto:") === 0) {
+      openExternal(href); return;
+    }
+    if (href.indexOf("/") === 0) {
+      var local = href.indexOf("/api/") === 0 || href.indexOf("/static/") === 0;
+      openExternal((local ? window.location.origin : synxBase()) + href); return;
+    }
+    if (href.indexOf("file://") === 0) { openPath(decodeURIComponent(href.slice(7))); return; }
+    if (href.indexOf("/home/") === 0 || href.indexOf("/mnt/") === 0 || href.indexOf("~/") === 0) {
+      openPath(href);
+    }
+  }
   function openPath(path) {
     if (!path) return;
     if (window.pywebview && window.pywebview.api && window.pywebview.api.open_path) {
@@ -974,21 +1040,7 @@
     if (a) {
       var href = a.getAttribute("href") || "";
       if (!href || href.charAt(0) === "#" || href.indexOf("javascript:") === 0) return;
-      if (href.indexOf("http://") === 0 || href.indexOf("https://") === 0 || href.indexOf("mailto:") === 0) {
-        e.preventDefault(); openExternal(href); return;
-      }
-      if (href.indexOf("/") === 0) {
-        e.preventDefault();
-        var local = href.indexOf("/api/") === 0 || href.indexOf("/static/") === 0;
-        openExternal((local ? window.location.origin : synxBase()) + href);
-        return;
-      }
-      if (href.indexOf("file://") === 0) {
-        e.preventDefault(); openPath(decodeURIComponent(href.slice(7))); return;
-      }
-      if (href.indexOf("/home/") === 0 || href.indexOf("/mnt/") === 0 || href.indexOf("~/") === 0) {
-        e.preventDefault(); openPath(href); return;
-      }
+      e.preventDefault(); openHref(href); return;
     }
     var code = e.target.closest("code, .mono");
     if (code) {

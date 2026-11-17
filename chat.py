@@ -15,6 +15,8 @@ from PIL import Image
 
 import db
 import fs_tools
+import mcp_manager
+import mcp_runtime
 import publish_flow
 import synx_tools
 import system_info
@@ -107,6 +109,24 @@ PDF на стандартных страницах, проверит его и �
 достаточно — переходи к генерации или отвечай текстом. Для списков версий
 используй shot/version фильтры и limit не больше 50.
 
+## ComfyUI MCP
+
+В программе включён MCP `comfyui-mcp` (artokun/comfyui-mcp). Это основной
+инструмент для работы с ComfyUI:
+
+- `mcp_list_tools` server=comfyui-mcp — список возможностей;
+- `mcp_call` tool=create_workflow — создать/modify/validate workflow JSON
+  (txt2img, img2img, upscale, inpaint, controlnet, ip_adapter, ltx_video и др.);
+- `mcp_call` tool=download_model — поиск и скачивание моделей/LoRA
+  (HuggingFace, CivitAI; target_subfolder `checkpoints`, `loras`, `vae`, ...);
+- `mcp_call` tool=list_local_models — что уже установлено;
+- `mcp_call` tool=search_custom_nodes / install_custom_node — кастомные ноды;
+- `mcp_call` tool=get_workflow / save_workflow / visualize_workflow.
+
+Перед первым вызовом незнакомого инструмента запроси схему через
+`mcp_call` tool=describe_tool. Для видео также доступен `ffmpeg-skill`
+(`mcp_call` tool=probe/cut/fit/...). Для PDF проще прямой PIL-пайплайн.
+
 ## Daily PDF
 
 Если просят «дэйли», контактный лист, PDF с кадрами и подписями — вызывай
@@ -140,12 +160,11 @@ layout — чёрный фон, 300 dpi, текст на 20% меньше, ка�
 
 ## ffmpeg и MCP
 
-`ffmpeg`/`ffprobe` установлены и являются базовыми инструментами: используй
-инструмент `ffmpeg` напрямую для видео (нарезка, склейка, слайдшоу, кадры,
-проверка ffprobe). В программе есть управление MCP-конфигами (поиск/установка/
-список), но вызов MCP-инструментов в рантайме пока не реализован. Для PDF и
-ffmpeg проще и надёжнее прямые вызовы встроенных инструментов; MCP для этого
-не обязателен.
+`ffmpeg`/`ffprobe` установлены и являются базовыми инструментами. Для видео
+можно использовать и прямой инструмент `ffmpeg`, и установленный MCP
+`ffmpeg-skill`: `mcp_list_tools` покажет инструменты, `mcp_call` вызовет
+`probe`, `cut`, `fit`, `caption`, `graphics`, `render` и др. Для PDF проще
+прямой PIL-пайплайн; MCP для PDF не обязателен.
 
 ## Сводка по проекту
 
@@ -337,6 +356,7 @@ DAILY_PDF_TOOL = {
                 "dpi": {"type": "integer", "default": 144},
                 "text_scale": {"type": "number", "default": 1.0},
                 "image_valign": {"type": "string", "enum": ["top", "center"], "default": "top"},
+                "text_layout": {"type": "string", "enum": ["stack", "columns"], "default": "stack"},
                 "background": {"type": "string", "default": "#000000"},
                 "base_version": {"type": "string", "description": "Reference version, e.g. v013"},
                 "publish": {"type": "boolean", "default": True},
@@ -529,7 +549,30 @@ FFMPEG_TOOL = {
     },
 }
 
-TOOLS = [IMAGE_TOOL, VERSION_GEN_TOOL, PDF_TOOL, VERIFY_PDF_TOOL, REPAIR_PDF_TOOL, DAILY_PDF_TOOL, PUBLISH_TOOL, FFMPEG_TOOL] + SYNX_TOOLS + FS_TOOLS
+MCP_TOOLS = [
+    {"type": "function", "function": {
+        "name": "mcp_list_tools",
+        "description": ("List tools of enabled MCP servers. ffmpeg-skill is installed and enabled; "
+                        "use it for video probe/cut/fit/caption/graphics etc."),
+        "parameters": {"type": "object", "properties": {
+            "server": {"type": "string", "description": "MCP server name/id; omit for all enabled"}
+        }},
+    }},
+    {"type": "function", "function": {
+        "name": "mcp_call",
+        "description": ("Call a tool on an enabled MCP server. For ffmpeg-skill use e.g. "
+                        "tool='probe' with arguments={'inputs':[path], 'json_brief':true}, or "
+                        "tool='fit'/'cut'/'caption' with their schema. Results are returned as JSON."),
+        "parameters": {"type": "object", "properties": {
+            "server": {"type": "string"},
+            "tool": {"type": "string"},
+            "arguments": {"type": "object"},
+            "timeout_sec": {"type": "integer", "default": 600},
+        }, "required": ["tool"]},
+    }},
+]
+
+TOOLS = [IMAGE_TOOL, VERSION_GEN_TOOL, PDF_TOOL, VERIFY_PDF_TOOL, REPAIR_PDF_TOOL, DAILY_PDF_TOOL, PUBLISH_TOOL, FFMPEG_TOOL] + MCP_TOOLS + SYNX_TOOLS + FS_TOOLS
 GEN_RE = re.compile(
     r"(нарисуй|сгенер|сгенерируй|сделай\s+(картин|изображ|кадр|арт)|"
     r"draw|generate\s+(an?\s+)?image|make\s+(an?\s+)?image|create\s+(an?\s+)?image)",
@@ -891,8 +934,13 @@ def _pdf_remix_request(text: str) -> dict[str, Any] | None:
         text_scale = 0.8
     image_valign = "center" if any(k in low for k in (
         "по-вертикали", "по вертикали", "по центру", "середине", "строго по середине")) else "top"
+    text_layout = "stack"
+    if any(k in low for k in ("разборчив", "читаем", "читаются", "буквы", "мелкий текст")):
+        text_layout = "columns"
+        text_scale = max(text_scale, 1.0)
     return {"base_version": base_version, "dpi": dpi, "text_scale": text_scale,
-            "image_valign": image_valign, "background": "#000000"}
+            "image_valign": image_valign, "text_layout": text_layout,
+            "background": "#000000"}
 
 
 def _remix_task() -> dict[str, Any] | None:
@@ -1145,6 +1193,10 @@ def _image_content(images: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _history_messages(session_id: str) -> list[dict[str, Any]]:
     rows = db.list_chat_messages(session_id, limit=40)
     out = [{"role": "system", "content": _system()}]
+    ctx = db.get_chat_context(session_id)
+    if ctx:
+        out.append({"role": "system",
+                    "content": "## Импортированный контекст предыдущего чата\n\n" + ctx[:120000]})
     for r in rows:
         if r.get("role") == "user" and r.get("images"):
             content: list[dict[str, Any]] = [{"type": "text", "text": r.get("content") or ""}]
@@ -1260,6 +1312,7 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
             dpi=int(args.get("dpi") or 144),
             text_scale=float(args.get("text_scale") if args.get("text_scale") is not None else 1.0),
             image_valign=args.get("image_valign") or "top",
+            text_layout=args.get("text_layout") or "stack",
             background=args.get("background") or "#000000",
             base_version=args.get("base_version"),
             publish=bool(args.get("publish", True)), bot_login=args.get("bot"),
@@ -1317,6 +1370,36 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
                                    bool(args.get("base64_data"))), [], None
     if name == "fs_delete":
         return fs_tools.delete_path(args.get("path") or ""), [], None
+    if name == "mcp_list_tools":
+        try:
+            server = args.get("server")
+            if server:
+                d = mcp_runtime.list_tools(server)
+                return {"server": d.get("server"), "count": d.get("count"),
+                        "tools": [{"name": t.get("name"),
+                                   "description": (t.get("description") or "")[:220]}
+                                  for t in d.get("tools") or []],
+                        "hint": "Use mcp_call with tool=describe_tool for the full JSON schema."}, [], None
+            servers = [s for s in mcp_manager.load_servers() if s.get("enabled")]
+            out = []
+            for srv in servers:
+                try:
+                    d = mcp_runtime.list_tools(srv.get("name"))
+                    out.append({"server": srv.get("name"), "count": d.get("count"),
+                                "tools": [t.get("name") for t in d.get("tools") or []]})
+                except Exception as exc:
+                    out.append({"server": srv.get("name"), "error": str(exc)})
+            return {"servers": out}, [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
+    if name == "mcp_call":
+        try:
+            result = mcp_runtime.call(
+                args.get("server"), args.get("tool") or "", args.get("arguments") or {},
+                timeout=float(args.get("timeout_sec") or 600))
+            return result, [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
     if name == "ffmpeg":
         binary = str(args.get("binary") or "ffmpeg").lower()
         if binary not in ("ffmpeg", "ffprobe"):
@@ -1331,6 +1414,46 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
         except Exception as exc:
             return {"error": str(exc)}, [], None
     return {"error": "unknown tool " + name}, [], None
+
+
+def chat_export_markdown(session_id: str = "default") -> dict[str, Any]:
+    session = db.one("SELECT * FROM chat_sessions WHERE id=?", (session_id,)) or {}
+    rows = db.list_chat_messages(session_id, limit=100000)
+    title = session.get("title") or "Чат"
+    lines = [f"# Чат: {title}", "", f"- Сессия: `{session_id}`",
+             f"- Экспорт: {datetime.now().isoformat(timespec='seconds')}", ""]
+    ctx = db.get_chat_context(session_id)
+    if ctx:
+        lines += ["## Импортированный контекст", "", ctx, ""]
+    for m in rows:
+        role = "Пользователь" if m.get("role") == "user" else "Ассистент"
+        lines += [f"## {role}", ""]
+        content = str(m.get("content") or "")
+        if content:
+            lines += [content, ""]
+        imgs = (m.get("images") if m.get("role") == "user" else m.get("generated")) or []
+        for im in imgs:
+            name = im.get("name") or "image"
+            url = im.get("url") or ""
+            path = im.get("path") or ""
+            if url:
+                lines.append(f"![{name}]({url})")
+            if path:
+                lines.append(f"Файл: `{path}`")
+        if m.get("playlist_text"):
+            lines += ["Плейлист:", "```text", str(m.get("playlist_text")), "```", ""]
+        stages = [e.get("text") for e in (m.get("progress") or []) if e.get("type") == "stage"]
+        if stages:
+            lines += ["<details><summary>Этапы</summary>", ""]
+            lines += [f"- {x}" for x in stages]
+            lines += ["", "</details>", ""]
+        usage = m.get("usage") or {}
+        if usage.get("input") or usage.get("output"):
+            lines += [f"Токены: {usage.get('input', 0)} / {usage.get('output', 0)}", ""]
+    text = "\n".join(lines).strip() + "\n"
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", title).strip("-")[:40] or "chat"
+    return {"markdown": text, "filename": f"{safe}-{date.today().isoformat()}.md",
+            "session_id": session_id, "messages": len(rows)}
 
 
 def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = None,
@@ -1375,6 +1498,7 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
                 page_size="A4", dpi=remix["dpi"],
                 text_scale=remix["text_scale"],
                 image_valign=remix["image_valign"],
+                text_layout=remix.get("text_layout") or "stack",
                 background=remix["background"],
                 base_version=remix.get("base_version"),
                 publish=True, progress=emit)
@@ -1383,7 +1507,7 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
                 f"Готово. Собрал PDF: {result.get('pages')} страниц, "
                 f"{result.get('page_size')}, {result.get('dpi')} dpi.{corrected}\n\n"
                 f"- Фон: {result.get('background')}; текст: {int(round(float(result.get('text_scale') or 1) * 100))}% от базы; "
-                f"кадр: {result.get('image_valign')} по вертикали.\n"
+                f"layout: {result.get('text_layout')}; кадр: {result.get('image_valign')} по вертикали.\n"
                 f"- PDF: `{result.get('pdf')}`\n"
                 f"- Рабочая папка: `{result.get('work_dir')}`\n"
                 f"- Render: `{result.get('render_dir')}`\n"

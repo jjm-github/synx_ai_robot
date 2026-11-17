@@ -48,6 +48,22 @@ class DesktopApi:
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
+    def save_text_file(self, text: str, filename: str = "chat.md"):
+        try:
+            import webview
+            window = webview.windows[0] if webview.windows else None
+            if not window:
+                return {"ok": False, "error": "no window"}
+            path = window.create_file_dialog(webview.SAVE_DIALOG, save_filename=filename)
+            if not path:
+                return {"ok": False, "cancelled": True}
+            if isinstance(path, (list, tuple)):
+                path = path[0]
+            Path(path).write_text(text or "", encoding="utf-8")
+            return {"ok": True, "path": str(path)}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
     def pick_folder(self):
         try:
             import webview

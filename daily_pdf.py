@@ -99,18 +99,41 @@ def _cover_label(draw: ImageDraw.ImageDraw, label: str, x: int, y: int,
     draw.text((x, y), text, font=font, fill=(150, 150, 150))
 
 
+def _fit_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont,
+              max_width: int) -> str:
+    text = str(text or "")
+    if draw.textlength(text, font=font) <= max_width:
+        return text
+    while text and draw.textlength(text + "…", font=font) > max_width:
+        text = text[:-1]
+    return text + "…"
+
+
+def _draw_block(draw: ImageDraw.ImageDraw, label: str, value: str, x: int, y: int,
+                width: int, fs: int, lh: int, label_color, value_color) -> int:
+    draw.text((x, y), label, font=_font(fs, True), fill=label_color)
+    y += lh
+    for line in _wrap(draw, value, _font(fs), width):
+        draw.text((x, y), line, font=_font(fs), fill=value_color)
+        y += lh
+    return y + max(1, lh // 4)
+
+
 def make_daily_pdf(images: list[dict[str, Any]], out_path: str | Path, title: str = "DAILY",
                    page_size: str = "A4", dpi: int = 144,
                    hardware: dict[str, Any] | None = None,
                    background: str = "#000000", text_scale: float = 1.0,
-                   image_valign: str = "top") -> Path:
+                   image_valign: str = "top", text_layout: str = "stack") -> Path:
     points = PAGE_POINTS.get(str(page_size or "A4").upper(), PAGE_POINTS["A4"])
     page_w = int(round(points[0] * dpi / 72))
     page_h = int(round(points[1] * dpi / 72))
     bg = _rgb(background)
     dpi_scale = dpi / 144.0
-    text_scale = max(0.45, min(1.6, float(text_scale or 1.0)))
+    text_scale = max(0.45, min(1.8, float(text_scale or 1.0)))
     scale = dpi_scale * text_scale
+    label_color = (153, 153, 153)   # 60% of white on black
+    value_color = (102, 102, 102)   # 40% of white on black
+    title_color = (153, 153, 153)
     hw = hardware or system_info.hardware_info()
     hw_line = system_info.hardware_line(hw)
     pages: list[Image.Image] = []
@@ -119,11 +142,11 @@ def make_daily_pdf(images: list[dict[str, Any]], out_path: str | Path, title: st
     cover = Image.new("RGB", (page_w, page_h), bg)
     d = ImageDraw.Draw(cover)
     d.text((int(36 * dpi_scale), int(30 * dpi_scale)), str(title),
-           font=_font(int(30 * scale), True), fill=(235, 235, 235))
+           font=_font(int(30 * scale), True), fill=title_color)
     d.text((int(36 * dpi_scale), int(74 * dpi_scale)),
            f"{len(images)} кадров · {hw.get('hostname') or ''} · "
            f"{hw.get('gpu', {}).get('name') or ''}",
-           font=_font(int(17 * scale)), fill=(140, 140, 140))
+           font=_font(int(17 * scale)), fill=value_color)
     grid_top = int(116 * dpi_scale)
     grid_bottom = page_h - int(30 * dpi_scale)
     gap = int(16 * dpi_scale)
@@ -166,40 +189,58 @@ def make_daily_pdf(images: list[dict[str, Any]], out_path: str | Path, title: st
         img_x = (page_w - im.width) // 2
         img_y = 0 if str(image_valign).lower() != "center" else (page_h - im.height) // 2
         page.paste(im, (img_x, img_y))
-        text_x = int(28 * dpi_scale)
+        text_x = int(24 * dpi_scale)
         text_y = img_y + im.height + int(6 * scale)
         max_width = page_w - text_x * 2
         blocks = _blocks(item, hw_line)
         title_txt = f"КАДР {idx}/{len(images)} — {item.get('title') or ''}"
+        columns = str(text_layout).lower() == "columns"
+        left_blocks = blocks[:2] if columns else blocks
+        right_blocks = blocks[2:] if columns else []
+        col_gap = int(24 * dpi_scale)
+        col_w = (max_width - col_gap) // 2 if columns else max_width
+        bottom_limit = page_h - int(8 * dpi_scale)
 
-        # Choose the largest body font that fits under the image.
         chosen = None
-        for base_size in (18, 17, 16, 15, 14, 13, 12, 11, 10):
+        for base_size in (20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9):
             fs = max(7, int(round(base_size * scale)))
-            lh = max(9, int(round(base_size * 1.22 * scale)))
+            lh = max(9, int(round(base_size * 1.18 * scale)))
             probe = ImageDraw.Draw(Image.new("RGB", (page_w, page_h), bg))
-            y = text_y + lh + int(4 * scale)
-            for label, value in blocks:
-                y += lh
-                y += len(_wrap(probe, value, _font(fs), max_width)) * lh
-                y += max(1, lh // 4)
-            if y <= page_h - int(8 * dpi_scale):
+            title_lh = lh + int(3 * scale)
+            y0 = text_y + title_lh
+            yl = y0
+            for label, value in left_blocks:
+                yl += lh
+                yl += len(_wrap(probe, value, _font(fs), col_w)) * lh
+                yl += max(1, lh // 4)
+            yr = y0
+            for label, value in right_blocks:
+                yr += lh
+                yr += len(_wrap(probe, value, _font(fs), col_w)) * lh
+                yr += max(1, lh // 4)
+            if max(yl, yr) <= bottom_limit:
                 chosen = (fs, lh)
                 break
         fs, lh = chosen or (max(7, int(round(10 * scale))), max(9, int(round(12 * scale))))
 
-        fl = _font(fs, True)
-        fv = _font(fs)
-        ft = _font(min(fs + max(4, int(round(4 * scale))), int(32 * scale)), True)
-        draw.text((text_x, text_y), title_txt, font=ft, fill=(235, 235, 235))
-        y = text_y + lh + int(4 * scale)
-        for label, value in blocks:
-            draw.text((text_x, y), label, font=fl, fill=(225, 225, 225))
-            y += lh
-            for line in _wrap(draw, value, fv, max_width):
-                draw.text((text_x, y), line, font=fv, fill=(140, 140, 140))
-                y += lh
-            y += max(1, lh // 4)
+        ft = _font(min(fs + max(3, int(round(3 * scale))), int(40 * scale)), True)
+        draw.text((text_x, text_y),
+                  _fit_text(draw, title_txt, ft, max_width), font=ft, fill=title_color)
+        y0 = text_y + lh + int(3 * scale)
+        if columns:
+            yl = y0
+            for label, value in left_blocks:
+                yl = _draw_block(draw, label, value, text_x, yl, col_w, fs, lh,
+                                 label_color, value_color)
+            yr = y0
+            for label, value in right_blocks:
+                yr = _draw_block(draw, label, value, text_x + col_w + col_gap, yr,
+                                 col_w, fs, lh, label_color, value_color)
+        else:
+            y = y0
+            for label, value in blocks:
+                y = _draw_block(draw, label, value, text_x, y, max_width, fs, lh,
+                                label_color, value_color)
         pages.append(page)
 
     out = Path(out_path)

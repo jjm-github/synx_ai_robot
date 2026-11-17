@@ -116,6 +116,7 @@ def init() -> None:
             CREATE TABLE IF NOT EXISTS chat_sessions (
                 id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
+                context_md TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -158,6 +159,9 @@ def init() -> None:
                          ("is_mention", "INTEGER DEFAULT 0")):
             if col not in pcols:
                 c.execute(f"ALTER TABLE publications ADD COLUMN {col} {typ}")
+        scols = {r["name"] for r in c.execute("PRAGMA table_info(chat_sessions)").fetchall()}
+        if "context_md" not in scols:
+            c.execute("ALTER TABLE chat_sessions ADD COLUMN context_md TEXT")
         ccols = {r["name"] for r in c.execute("PRAGMA table_info(chat_messages)").fetchall()}
         if "playlist_text" not in ccols:
             c.execute("ALTER TABLE chat_messages ADD COLUMN playlist_text TEXT")
@@ -518,6 +522,18 @@ def list_chat_messages(session_id: str = "default", limit: int = 200) -> list[di
             except Exception:
                 r[dst] = [] if dst != "usage" else {}
     return rows
+
+
+def get_chat_context(session_id: str = "default") -> str:
+    row = one("SELECT context_md FROM chat_sessions WHERE id=?", (session_id,))
+    return str((row or {}).get("context_md") or "")
+
+
+def set_chat_context(session_id: str, markdown: str) -> None:
+    execute("INSERT OR IGNORE INTO chat_sessions (id,title,created_at,updated_at) VALUES (?,?,?,?)",
+            (session_id, "Новый чат", now(), now()))
+    execute("UPDATE chat_sessions SET context_md=?, updated_at=? WHERE id=?",
+            (markdown or "", now(), session_id))
 
 
 def clear_chat(session_id: str = "default") -> None:

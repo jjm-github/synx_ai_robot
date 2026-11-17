@@ -706,7 +706,7 @@ def publish_daily_pdf(task_id: int, items: list[dict[str, Any]], title: str = "D
                       page_size: str = "A4", dpi: int = 144, publish: bool = True,
                       bot_login: str | None = None, text_scale: float = 1.0,
                       image_valign: str = "top", background: str = "#000000",
-                      base_version: str | None = None,
+                      text_layout: str = "stack", base_version: str | None = None,
                       progress: Callable[[dict[str, Any]], None] | None = None
                       ) -> dict[str, Any]:
     """Build a daily PDF (contact sheet + one frame per page + metadata) and publish it."""
@@ -775,7 +775,7 @@ def publish_daily_pdf(task_id: int, items: list[dict[str, Any]], title: str = "D
     pdf = daily_pdf.make_daily_pdf(daily_items, work / f"{_safe(task_name)}_daily.pdf",
                                    title=title, page_size=page_size, dpi=dpi, hardware=hw,
                                    background=background, text_scale=text_scale,
-                                   image_valign=image_valign)
+                                   image_valign=image_valign, text_layout=text_layout)
     check = verify_pdf(pdf, expected_pages=len(daily_items) + 1)
     if not check.get("ok"):
         raise ValueError("daily PDF не прошёл проверку: " + "; ".join(check.get("errors") or []))
@@ -789,7 +789,8 @@ def publish_daily_pdf(task_id: int, items: list[dict[str, Any]], title: str = "D
         "daily": True,
         "pages": check.get("pages"),
         "page_size": page_size.upper(), "dpi": dpi, "text_scale": text_scale,
-        "image_valign": image_valign, "background": background, "base_version": base_version,
+        "image_valign": image_valign, "background": background,
+        "text_layout": text_layout, "base_version": base_version,
         "pdf_info": check,
         "images": [{"file": Path(it["path"]).name, "title": it.get("title"),
                     "prompt_en": it.get("prompt_en"), "prompt_ru": it.get("prompt_ru"),
@@ -807,7 +808,8 @@ def publish_daily_pdf(task_id: int, items: list[dict[str, Any]], title: str = "D
         f"- Шот: {project_alias}/{entity_name}\n"
         f"- PDF: {pdf.name} — {check.get('pages')} страниц, {page_size.upper()}, "
         f"{check.get('page_width')}x{check.get('page_height')} pts, {dpi} dpi, проверен\n"
-        f"- Базовая версия: {base_version or '—'}; text_scale={text_scale}, image_valign={image_valign}, фон {background}\n"
+        f"- Базовая версия: {base_version or '—'}; text_scale={text_scale}, "
+        f"text_layout={text_layout}, image_valign={image_valign}, фон {background}\n"
         f"- Обложка: все кадры мелко; далее по одному кадру на страницу.\n"
         f"- Фон страниц: чёрный; кадры по ширине листа; подписи серым.\n"
         f"- Render: {render}\n",
@@ -821,7 +823,8 @@ def publish_daily_pdf(task_id: int, items: list[dict[str, Any]], title: str = "D
 
     comment = _daily_comment(daily_items, hw, check.get("pages") or len(daily_items) + 1)
     if base_version:
-        comment = f"Базовая версия: {base_version}; {dpi} dpi; text_scale={text_scale}; image_valign={image_valign}; фон {background}.\n" + comment
+        comment = (f"Базовая версия: {base_version}; {dpi} dpi; text_scale={text_scale}; "
+                   f"text_layout={text_layout}; image_valign={image_valign}; фон {background}.\n" + comment)
     stage("Публикую daily PDF от имени бота...")
     bc = bot_client(base, bot)
     v = bc.publish_version(
@@ -859,7 +862,7 @@ def publish_daily_pdf(task_id: int, items: list[dict[str, Any]], title: str = "D
             "pdf": str(pdf), "pdf_info": check, "pages": check.get("pages"),
             "page_size": page_size.upper(), "dpi": dpi, "text_scale": text_scale,
             "image_valign": image_valign, "background": background,
-            "base_version": base_version, "work_dir": str(work),
+            "text_layout": text_layout, "base_version": base_version, "work_dir": str(work),
             "render_dir": str(render), "media": media, "media_kind": media_kind,
             "warning": warning, "comment": comment,
             "images": [str(it["path"]) for it in daily_items]}
