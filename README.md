@@ -132,23 +132,28 @@ output_dir ~/opt/ComfyUI/output
 
 ## Структура рабочих файлов
 
-Рабочие файлы ботов:
+Все рабочие файлы генерации — PNG/JPG, видео, workflow JSON, PDF, meta,
+README — лежат под задачей, в папке бота, назначенного на задачу:
 
 ```text
 <projects_root>/<project>/shots/<sequence>/<shot>/<task_type>/work/<bot>/<task_name>_vXXX/
 ```
 
-Для Liberia:
+Для asset-сущностей:
 
 ```text
-<projects_root>/<project>/assets/<shot>/<task_type>/work/<bot>/<task_name>_vXXX/
+<projects_root>/<project>/assets/<asset>/<task_type>/work/<bot>/<task_name>_vXXX/
 ```
 
-Рендеры (PNG/MP4 и отдельные файлы):
+Финальные рендеры (PNG/MP4/PDF и отдельные файлы):
 
 ```text
 <shot_dir>/render/vXXX/
 ```
+
+Нельзя складывать рабочие файлы в корень проекта, `render/` без `vXXX` или
+произвольные папки. Превью в `data/chat` — временное; канонические файлы
+задачи — только в папке задачи/бота.
 
 Шаблоны путей настраиваются в `config.json` → `paths.layouts`.
 
@@ -208,6 +213,18 @@ output_dir ~/opt/ComfyUI/output
 
 Пример: 5 кадров → PDF на 5 страниц (2062×864), задача `cubism_frames`, бот
 `e.matveev` (Render, AI), версия `v005` в Liberia / p002_0130.
+
+## Synx API для робота
+
+Актуальный справочник API лежит в `prompts/synx_api.md` и подмешивается в
+системный промпт чата: проекты, сущности, задачи, версии, комментарии,
+события, личные сообщения, task_types, assignments-form (скилы ботов),
+публикации задачи, публикация версии, media kinds и формат плейлиста.
+
+Важно для PDF: после публикации робот проверяет `media.kind`. Если synx
+вернул `null`, PDF не распознан для этой сущности/типа задачи — плеер может
+показать пустоту; нужен preview (контактный лист/слайдшоу) или PDF-friendly
+задача/asset. Сам PDF при этом проверяется по страницам и размеру.
 
 ## Synx-инструменты в чате
 

@@ -64,6 +64,18 @@ generate_from_synx_version ОДИН раз и передай project, shot, vers
 generate_image. В prompt передавай подробный английский промпт. Если есть
 референс — передай его путь в reference_paths и preserve_aspect=true.
 
+## Рабочие файлы генераций
+
+Все рабочие файлы генерации — PNG/JPG, видео, workflow JSON, PDF, meta,
+README — должны лежать под задачей, в папке бота, назначенного на задачу:
+
+`<project>/shots/<sequence>/<shot>/<task_type_lower>/work/<bot>/<task_name>_vXXX/`
+
+Финальные изображения/видео/PDF копируй в `<shot>/render/vXXX/`. Не сохраняй
+рабочие файлы в корень проекта, `render/` без `vXXX` или произвольные папки.
+Превью в `data/chat` — временное; канонические файлы задачи — только в папке
+задачи/бота. Перед публикацией проверь, что файлы уже лежат там.
+
 ## Публикация кадров из чата
 
 Если пользователь просит «сделай PDF из этих кадров», «опубликуй версию»,
@@ -78,8 +90,16 @@ generate_image. В prompt передавай подробный английск
 они есть. Если нужен список ботов и их скилов, вызови synx_bots.
 
 Для отдельной склейки картинок в PDF используй make_pdf_from_images (одна
-картинка на страницу). Для создания задачи, раскладки файлов и публикации PDF
-версией используй publish_images_as_version.
+картинка на страницу, стандартная страница A3, поля и проверка). Для создания
+задачи, раскладки файлов и публикации PDF версией используй
+publish_images_as_version. Перед публикацией PDF всегда проверяй
+`verify_pdf`: число страниц, размер страницы и отсутствие пустых страниц.
+После публикации проверь `media.kind` версии: если он `null`, synx не
+распознал PDF для этого шота/типа задачи — плеер может показать пустоту.
+В таком случае опубликуй preview-версию (контактный лист/слайдшоу) или
+используй PDF-friendly задачу/asset, а PDF оставь файлом задачи/публикацией.
+Если PDF-версия пустая или плохая — используй repair_pdf_task: он пересоберёт
+PDF на стандартных страницах, проверит его и опубликует новую версию.
 
 Не повторяй один и тот же вызов инструмента с теми же аргументами. Если результата
 достаточно — переходи к генерации или отвечай текстом. Для списков версий
@@ -182,6 +202,9 @@ PUBLISH_TOOL = {
                 "comment": {"type": "string", "description": "Task comment"},
                 "version_comment": {"type": "string", "description": "Comment for the published version"},
                 "pdf_name": {"type": "string", "description": "PDF filename without extension"},
+                "page_size": {"type": "string", "enum": ["A4", "A3", "A2", "LETTER"], "default": "A4"},
+                "margin_mm": {"type": "number", "default": 10},
+                "dpi": {"type": "integer", "default": 144},
                 "image_source": {"type": "string", "enum": ["last_chat_images", "paths"],
                                  "default": "last_chat_images"},
                 "image_paths": {"type": "array", "items": {"type": "string"}},
@@ -205,7 +228,49 @@ PDF_TOOL = {
                                  "default": "last_chat_images"},
                 "image_paths": {"type": "array", "items": {"type": "string"}},
                 "pdf_name": {"type": "string", "description": "Output PDF name without extension"},
+                "page_size": {"type": "string", "enum": ["A4", "A3", "A2", "LETTER"], "default": "A4"},
+                "margin_mm": {"type": "number", "default": 10},
+                "dpi": {"type": "integer", "default": 144},
             },
+        },
+    },
+}
+
+VERIFY_PDF_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "verify_pdf",
+        "description": ("Check a PDF: page count, page size, file size and whether any page is blank. "
+                        "Use it before publishing and when a PDF looks empty in synx."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "pdf_path": {"type": "string"},
+                "task_id": {"type": "integer", "description": "Local task id; PDF is taken from its result_file"},
+                "expected_pages": {"type": "integer"},
+            },
+        },
+    },
+}
+
+REPAIR_PDF_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "repair_pdf_task",
+        "description": ("Rebuild a bad/empty PDF for a local task on standard pages, verify every page, "
+                        "and publish the corrected PDF as a new synx version. Use when a PDF version "
+                        "is empty or looks wrong."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "integer"},
+                "page_size": {"type": "string", "enum": ["A4", "A3", "A2", "LETTER"], "default": "A4"},
+                "margin_mm": {"type": "number", "default": 10},
+                "dpi": {"type": "integer", "default": 144},
+                "publish": {"type": "boolean", "default": True},
+                "bot": {"type": "string"},
+            },
+            "required": ["task_id"],
         },
     },
 }
@@ -361,7 +426,7 @@ FS_TOOLS = [
     }},
 ]
 
-TOOLS = [IMAGE_TOOL, VERSION_GEN_TOOL, PDF_TOOL, PUBLISH_TOOL] + SYNX_TOOLS + FS_TOOLS
+TOOLS = [IMAGE_TOOL, VERSION_GEN_TOOL, PDF_TOOL, VERIFY_PDF_TOOL, REPAIR_PDF_TOOL, PUBLISH_TOOL] + SYNX_TOOLS + FS_TOOLS
 GEN_RE = re.compile(
     r"(нарисуй|сгенер|сгенерируй|сделай\s+(картин|изображ|кадр|арт)|"
     r"draw|generate\s+(an?\s+)?image|make\s+(an?\s+)?image|create\s+(an?\s+)?image)",
@@ -906,9 +971,29 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
         out_dir = ROOT / "data" / "chat" / "pdf"
         out_dir.mkdir(parents=True, exist_ok=True)
         name = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(args.get("pdf_name") or "frames")).strip("_") or "frames"
-        pdf = publish_flow.make_pdf([i["path"] for i in imgs], out_dir / (name + ".pdf"))
-        return {"ok": True, "pdf": str(pdf), "pages": len(imgs),
-                "images": [i["path"] for i in imgs]}, [], None
+        pdf = publish_flow.make_pdf([i["path"] for i in imgs], out_dir / (name + ".pdf"),
+                                    page_size=args.get("page_size") or "A4",
+                                    margin_mm=float(args.get("margin_mm") or 10),
+                                    dpi=int(args.get("dpi") or 144))
+        info = publish_flow.verify_pdf(pdf, expected_pages=len(imgs))
+        return {"ok": bool(info.get("ok")), "pdf": str(pdf), "pages": len(imgs),
+                "pdf_info": info, "images": [i["path"] for i in imgs]}, [], None
+    if name == "verify_pdf":
+        pdf_path = args.get("pdf_path")
+        if not pdf_path and args.get("task_id") is not None:
+            task = db.get_task(int(args.get("task_id")))
+            pdf_path = (task or {}).get("result_file")
+        if not pdf_path:
+            return {"error": "pdf_path or task_id with result_file is required"}, [], None
+        return publish_flow.verify_pdf(pdf_path, args.get("expected_pages")), [], None
+    if name == "repair_pdf_task":
+        result = publish_flow.repair_pdf_task(
+            int(args.get("task_id")), page_size=args.get("page_size") or "A4",
+            margin_mm=float(args.get("margin_mm") or 10),
+            dpi=int(args.get("dpi") or 144),
+            publish=bool(args.get("publish", True)),
+            bot_login=args.get("bot"), progress=progress)
+        return result, [], None
     if name == "publish_images_as_version":
         explicit = None
         if args.get("image_source") == "paths":
@@ -920,8 +1005,11 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
             task_type=args.get("task_type") or "Art",
             bot_login=args.get("bot"), comment=args.get("comment") or "",
             version_comment=args.get("version_comment") or "",
-            pdf_name=args.get("pdf_name") or "", dry_run=bool(args.get("dry_run")),
-            progress=progress)
+            pdf_name=args.get("pdf_name") or "",
+            page_size=args.get("page_size") or "A4",
+            margin_mm=float(args.get("margin_mm") or 10),
+            dpi=int(args.get("dpi") or 144),
+            dry_run=bool(args.get("dry_run")), progress=progress)
         return result, [], None
     if name == "synx_find_version":
         try:

@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Callable
 
-from PIL import Image
+from PIL import Image, ImageOps, ImageStat
 
 import db
 from config import DATA_DIR, load_bots, load_config
@@ -49,20 +51,105 @@ def _valid_images(images: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def make_pdf(image_paths: list[str | Path], out_path: str | Path) -> Path:
+# Standard landscape page sizes in PDF points (exact integer A4/A3 like synx PDFs).
+PAGE_POINTS = {
+    "A4": (842, 595),
+    "A3": (1191, 842),
+    "A2": (1684, 1191),
+    "LETTER": (792, 612),
+}
+
+
+def make_pdf(image_paths: list[str | Path], out_path: str | Path,
+             page_size: str = "A4", dpi: int = 144, margin_mm: float = 10.0,
+             background: str = "#ffffff") -> Path:
+    """One image per page on a standard landscape page, aspect preserved."""
+    points = PAGE_POINTS.get(str(page_size or "A4").upper(), PAGE_POINTS["A4"])
+    page_w = max(320, int(round(points[0] * dpi / 72.0)))
+    page_h = max(240, int(round(points[1] * dpi / 72.0)))
+    margin = max(0, int(round(float(margin_mm) / 25.4 * dpi)))
     pages: list[Image.Image] = []
     for raw in image_paths:
         p = Path(raw)
         if not p.is_file():
             continue
-        with Image.open(p) as im:
-            pages.append(im.convert("RGB").copy())
+        with Image.open(p) as src:
+            im = ImageOps.contain(src.convert("RGB"), (page_w - 2 * margin, page_h - 2 * margin),
+                                  Image.LANCZOS)
+        page = Image.new("RGB", (page_w, page_h), background)
+        page.paste(im, ((page_w - im.width) // 2, (page_h - im.height) // 2))
+        pages.append(page)
     if not pages:
         raise ValueError("no images for PDF")
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    pages[0].save(out, "PDF", save_all=True, append_images=pages[1:], resolution=72.0)
+    pages[0].save(out, "PDF", save_all=True, append_images=pages[1:], resolution=dpi)
     return out
+
+
+def pdf_info(pdf_path: str | Path) -> dict[str, Any]:
+    path = Path(pdf_path)
+    info: dict[str, Any] = {"path": str(path), "exists": path.is_file(),
+                            "bytes": path.stat().st_size if path.is_file() else 0,
+                            "pages": None, "page_width": None, "page_height": None,
+                            "errors": []}
+    if not path.is_file():
+        info["errors"].append("file not found")
+        return info
+    try:
+        cp = subprocess.run(["pdfinfo", str(path)], capture_output=True, text=True, timeout=30)
+    except Exception as exc:
+        info["errors"].append(f"pdfinfo: {exc}")
+        return info
+    if cp.returncode != 0:
+        info["errors"].append("pdfinfo: " + (cp.stderr or cp.stdout or "failed")[:500])
+        return info
+    text = cp.stdout or ""
+    m = re.search(r"^Pages:\s+(\d+)", text, re.M)
+    if m:
+        info["pages"] = int(m.group(1))
+    m = re.search(r"^Page size:\s+([\d.]+)\s+x\s+([\d.]+)", text, re.M)
+    if m:
+        info["page_width"] = float(m.group(1))
+        info["page_height"] = float(m.group(2))
+    return info
+
+
+def verify_pdf(pdf_path: str | Path, expected_pages: int | None = None) -> dict[str, Any]:
+    info = pdf_info(pdf_path)
+    errors = list(info.get("errors") or [])
+    if not info.get("exists"):
+        errors.append("PDF не создан")
+    if not info.get("pages"):
+        errors.append("не удалось определить число страниц")
+    if expected_pages is not None and info.get("pages") not in (None, expected_pages):
+        errors.append(f"страниц {info.get('pages')}, ожидалось {expected_pages}")
+    if info.get("bytes", 0) < 2000:
+        errors.append("файл слишком маленький")
+    blank_pages: list[int] = []
+    if info.get("pages") and shutil.which("pdftoppm"):
+        try:
+            with tempfile.TemporaryDirectory(prefix="pdfcheck_") as td:
+                prefix = Path(td) / "p"
+                cp = subprocess.run(["pdftoppm", "-r", "20", "-png", str(pdf_path), str(prefix)],
+                                    capture_output=True, text=True, timeout=120)
+                if cp.returncode != 0:
+                    errors.append("pdftoppm: " + (cp.stderr or "failed")[:300])
+                else:
+                    for i, f in enumerate(sorted(Path(td).glob("p-*.png")), 1):
+                        with Image.open(f) as im:
+                            gray = im.convert("L")
+                            stat = ImageStat.Stat(gray)
+                            if not gray.getbbox() or stat.stddev[0] < 1.0:
+                                blank_pages.append(i)
+        except Exception as exc:
+            errors.append(f"проверка страниц: {exc}")
+    if blank_pages:
+        errors.append("пустые страницы: " + ", ".join(str(x) for x in blank_pages))
+    info["blank_pages"] = blank_pages
+    info["ok"] = not errors
+    info["errors"] = errors
+    return info
 
 
 def _pick_bot(client: SynxClient, task_id: str, requested: str | None = None
@@ -197,6 +284,7 @@ def publish_images_as_version(project: str | None, shot: str | None,
                               comment: str = "",
                               version_comment: str = "",
                               pdf_name: str = "",
+                              page_size: str = "A4", margin_mm: float = 10.0, dpi: int = 144,
                               dry_run: bool = False,
                               progress: Callable[[dict[str, Any]], None] | None = None
                               ) -> dict[str, Any]:
@@ -243,11 +331,16 @@ def publish_images_as_version(project: str | None, shot: str | None,
             dst = out_dir / f"frame_{i:02d}.png"
             shutil.copy2(item["path"], dst)
             local.append(dst)
-        pdf = make_pdf(local, out_dir / (_safe(pdf_name, name) + ".pdf"))
+        pdf = make_pdf(local, out_dir / (_safe(pdf_name, name) + ".pdf"),
+                       page_size=page_size, dpi=dpi, margin_mm=margin_mm)
+        check = verify_pdf(pdf, expected_pages=len(local))
+        if not check.get("ok"):
+            raise ValueError("PDF не прошёл проверку: " + "; ".join(check.get("errors") or []))
         return {"ok": True, "dry_run": True, "project": project_alias, "shot": entity_name,
                 "source_version": info.get("version"), "target_version": next_ver,
                 "images": [str(p) for p in local], "pdf": str(pdf),
                 "task_name": name, "task_type": requested_type, "bot": bot_login or "auto",
+                "page_size": page_size.upper(), "pdf_info": check,
                 "project_corrected": bool(info.get("project_corrected")),
                 "requested_project": info.get("requested_project")}
 
@@ -333,18 +426,31 @@ def publish_images_as_version(project: str | None, shot: str | None,
                  "bot": bot_name, "bot_skills": user.get("skills") or ""},
         "images": meta_images,
         "pdf": _safe(pdf_name, name) + ".pdf",
+        "pdf_info": None,
     }
     (work / "generation_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2),
                                                encoding="utf-8")
 
-    stage("Собираю PDF: одна картинка на страницу...")
-    pdf = make_pdf(copied, work / (_safe(pdf_name, name) + ".pdf"))
+    stage("Собираю PDF и проверяю страницы...")
+    pdf = make_pdf(copied, work / (_safe(pdf_name, name) + ".pdf"),
+                   page_size=page_size, dpi=dpi, margin_mm=margin_mm)
+    pdf_check = verify_pdf(pdf, expected_pages=len(copied))
+    if not pdf_check.get("ok"):
+        raise ValueError("PDF не прошёл проверку: " + "; ".join(pdf_check.get("errors") or []))
     shutil.copy2(pdf, renders / pdf.name)
+    meta["pdf_info"] = pdf_check
+    (work / "generation_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2),
+                                               encoding="utf-8")
     version_cfg = {
         "profile": "document",
         "source_version": info.get("version"),
         "images": total,
-        "page_size": f"{w0}x{h0}",
+        "page_size": page_size.upper(),
+        "page_width": pdf_check.get("page_width"),
+        "page_height": pdf_check.get("page_height"),
+        "pdf_pages": pdf_check.get("pages"),
+        "pdf_verified": True,
+        "dpi": dpi, "margin_mm": margin_mm,
         "workflow_files": [str(p.relative_to(work)) for p in workflow_files],
     }
     (work / "README.md").write_text(
@@ -353,7 +459,8 @@ def publish_images_as_version(project: str | None, shot: str | None,
         f"- Исходная версия: {info.get('version')}\n"
         f"- Задача synx: {task_id} ({requested_type})\n"
         f"- Бот: {bot_name} ({user.get('skills') or ''})\n"
-        f"- PDF: {pdf.name} — {total} страниц, по одной картинке на страницу\n"
+        f"- PDF: {pdf.name} — {pdf_check.get('pages')} страниц, {page_size.upper()}, "
+        f"{pdf_check.get('page_width')}x{pdf_check.get('page_height')} pts, проверен\n"
         f"- Render: {renders}\n"
         "- Workflows: папка `workflows/`, по одному JSON на кадр.\n"
         "- `source_reference.png` — кадр исходной версии.\n"
@@ -367,10 +474,18 @@ def publish_images_as_version(project: str | None, shot: str | None,
         comment=version_comment or f"PDF: {total} кадров, по одному на страницу",
         minutes=10, note="Synx AI Robot chat PDF")
     version_code = v.get("version_code")
+    media = v.get("media") or {}
+    media_kind = media.get("kind")
+    warning = None
+    if media_kind != "pdf":
+        warning = ("synx не распознал PDF как media (media.kind=%r). Версия доступна "
+                   "файлом, но плеер может показать пустоту — нужен preview или "
+                   "PDF-friendly тип задачи/asset." % (media_kind,))
     url = version_url(cfg["synx"]["base_url"], project_alias, entity_kind, entity_name,
                       version_code, requested_type, name) if version_code else None
     try:
-        bc.task_comment(task_id, f"PDF {version_code or ''} опубликован: {url or pdf}")
+        bc.task_comment(task_id, f"PDF {version_code or ''} опубликован: {url or pdf}"
+                        + (f"\n{warning}" if warning else ""))
     except Exception:
         pass
     try:
@@ -392,6 +507,7 @@ def publish_images_as_version(project: str | None, shot: str | None,
         "task_name": name, "task_type": requested_type, "assignee": bot_name,
         "publish_comment": version_comment or f"PDF: {total} кадров",
         "images": [str(p) for p in copied], "pdf": str(pdf),
+        "pdf_info": pdf_check,
         "workflow_config": version_cfg,
     }
     tid = db.create_task({
@@ -421,3 +537,151 @@ def publish_images_as_version(project: str | None, shot: str | None,
         "project_corrected": bool(info.get("project_corrected")),
         "requested_project": info.get("requested_project"),
     }
+
+
+def repair_pdf_task(task_id: int, page_size: str = "A4", margin_mm: float = 10.0,
+                    dpi: int = 144, publish: bool = True,
+                    bot_login: str | None = None,
+                    progress: Callable[[dict[str, Any]], None] | None = None
+                    ) -> dict[str, Any]:
+    """Rebuild a task PDF on standard pages, verify it, and publish a new version."""
+    def stage(text: str) -> None:
+        if progress:
+            progress({"type": "stage", "text": text})
+
+    task = db.get_task(int(task_id))
+    if not task:
+        raise ValueError(f"task not found: {task_id}")
+    cfg = load_config()
+    base = cfg["synx"]["base_url"]
+    client = SynxClient(base, cfg["synx"]["login"], cfg["synx"]["password"])
+    source = dict(task.get("source_json") or {})
+    entity_id = task.get("entity_id") or source.get("entity_id")
+    project_alias = source.get("project_alias") or task.get("project_id")
+    entity_name = source.get("entity_name") or task.get("shot")
+    sequence = source.get("sequence") or ""
+    entity_kind = source.get("entity_kind") or "shot"
+    task_type = task.get("task_type") or "Art"
+    task_name = task.get("task_name") or "frames_pdf"
+    old_work = Path(task.get("work_dir") or "")
+    old_render = Path(task.get("render_dir") or "")
+    if not entity_id or not project_alias or not entity_name:
+        raise ValueError("в задаче не хватает project/entity для публикации")
+
+    images = sorted(old_work.glob("frame_*.png"))
+    if not images:
+        images = sorted(p for p in old_work.glob("*.png") if p.name != "source_reference.png")
+    if not images and old_render.is_dir():
+        images = sorted(old_render.glob("frame_*.png"))
+    if not images:
+        raise ValueError("в рабочей папке задачи нет кадров frame_*.png")
+
+    bot_login = bot_login or task.get("bot")
+    bots = [b for b in load_bots() if b.get("enabled", True) and b.get("login") and b.get("password")]
+    bot = next((b for b in bots if b.get("login") == bot_login), None)
+    if not bot:
+        bot, user = _pick_bot(client, task.get("synx_task_id") or "", bot_login)
+    else:
+        try:
+            user = next((u for u in client.assignment_users(task["synx_task_id"])
+                         if u.get("short_name") == bot.get("login")), {})
+        except Exception:
+            user = {}
+    bot_name = bot.get("login")
+    versions = client.versions(entity_id)
+    next_ver = max([int(v.get("version_number") or 0) for v in versions] + [0]) + 1
+    stage(f"Пересобираю PDF на {page_size} и проверяю страницы...")
+    work = task_work_dir(cfg, project_alias, entity_name, sequence, task_type,
+                         bot_name, task_name, next_ver, entity_kind=entity_kind)
+    render = render_dir(cfg, project_alias, entity_name, sequence, next_ver,
+                        entity_kind=entity_kind)
+    work.mkdir(parents=True, exist_ok=True)
+    render.mkdir(parents=True, exist_ok=True)
+    if (old_work / "workflows").is_dir():
+        shutil.copytree(old_work / "workflows", work / "workflows", dirs_exist_ok=True)
+    if (old_work / "source_reference.png").is_file():
+        shutil.copy2(old_work / "source_reference.png", work / "source_reference.png")
+
+    copied = []
+    for i, p in enumerate(images, 1):
+        dst = work / f"frame_{i:02d}.png"
+        shutil.copy2(p, dst)
+        copied.append(dst)
+        shutil.copy2(dst, render / dst.name)
+    pdf = make_pdf(copied, work / f"{_safe(task_name)}.pdf",
+                   page_size=page_size, dpi=dpi, margin_mm=margin_mm)
+    check = verify_pdf(pdf, expected_pages=len(copied))
+    if not check.get("ok"):
+        raise ValueError("PDF не прошёл проверку: " + "; ".join(check.get("errors") or []))
+    shutil.copy2(pdf, render / pdf.name)
+    meta = {
+        "source": source,
+        "task": {"synx_task_id": task.get("synx_task_id"), "name": task_name,
+                 "type": task_type, "bot": bot_name,
+                 "bot_skills": (user or {}).get("skills") or ""},
+        "images": [{"index": i, "file": p.name, "width": w, "height": h}
+                   for i, (p, (w, h)) in enumerate(
+                       [(p, Image.open(p).size) for p in copied], 1)],
+        "pdf": pdf.name,
+        "pdf_info": check,
+        "repaired_from": task.get("version_code"),
+    }
+    (work / "generation_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2),
+                                               encoding="utf-8")
+    (work / "README.md").write_text(
+        f"# {task_name} — repaired PDF\n\n"
+        f"- Шот: {project_alias}/{entity_name}\n"
+        f"- Исправлено из версии: {task.get('version_code')}\n"
+        f"- PDF: {pdf.name} — {check.get('pages')} страниц, {page_size.upper()}, "
+        f"{check.get('page_width')}x{check.get('page_height')} pts\n"
+        f"- Проверка: страницы и пустые страницы проверены автоматически\n"
+        f"- Render: {render}\n",
+        encoding="utf-8")
+
+    if not publish:
+        return {"ok": True, "dry_run": True, "task_id": task_id, "pdf": str(pdf),
+                "pdf_info": check, "page_size": page_size.upper(),
+                "work_dir": str(work), "render_dir": str(render),
+                "images": [str(p) for p in copied]}
+
+    stage("Публикую исправленный PDF от имени бота...")
+    bc = bot_client(base, bot)
+    v = bc.publish_version(
+        entity_id, pdf, task.get("synx_task_id") or "",
+        comment=f"Исправленный PDF: {len(copied)} стр., {page_size.upper()}, проверен",
+        minutes=10, note="Synx AI Robot PDF repair")
+    version_code = v.get("version_code")
+    media = v.get("media") or {}
+    media_kind = media.get("kind")
+    warning = None
+    if media_kind != "pdf":
+        warning = ("synx не распознал PDF как media (media.kind=%r). Версия доступна "
+                   "файлом, но плеер может показать пустоту — нужен preview или "
+                   "PDF-friendly тип задачи/asset." % (media_kind,))
+    url = version_url(base, project_alias, entity_kind, entity_name, version_code,
+                      task_type, task_name) if version_code else None
+    try:
+        bc.task_comment(task["synx_task_id"], f"Исправленный PDF {version_code}: {url or pdf}"
+                        + (f"\n{warning}" if warning else ""))
+    except Exception:
+        pass
+    source.update({"target_version": next_ver, "pdf_info": check})
+    plan = dict(task.get("plan_json") or {})
+    plan.update({"pdf": str(pdf), "pdf_info": check,
+                 "repaired_from": task.get("version_code"),
+                 "version_code": version_code})
+    db.update_task(task_id, result_file=str(pdf), work_dir=str(work), render_dir=str(render),
+                   version_id=v.get("id"), version_code=version_code, synx_url=url,
+                   status="done", stage="published", plan_json=json.dumps(plan, ensure_ascii=False),
+                   source_json=json.dumps(source, ensure_ascii=False),
+                   finished_at=db.now(), error=None)
+    db.add_event(task_id, "repair", f"PDF repaired and published as {version_code}: {url or pdf}")
+    return {"ok": True, "dry_run": False, "task_id": task_id,
+            "synx_task_id": task.get("synx_task_id"), "bot": bot_name,
+            "bot_skills": (user or {}).get("skills") or "",
+            "version_code": version_code, "version_id": v.get("id"), "url": url,
+            "pdf": str(pdf), "pdf_info": check, "page_size": page_size.upper(),
+            "work_dir": str(work), "render_dir": str(render),
+            "images": [str(p) for p in copied],
+            "media": media, "media_kind": media_kind, "warning": warning,
+            "repaired_from": task.get("version_code")}
