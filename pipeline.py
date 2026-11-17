@@ -259,7 +259,8 @@ class PipelineManager:
             target_ver = int(src_meta.get("target_version") or 1)
             rdir = Path(task.get("render_dir") or make_render_dir(
                 cfg, src_meta.get("project_alias") or task.get("project_id") or "project",
-                task.get("shot") or "shot", src_meta.get("sequence") or "", target_ver))
+                task.get("shot") or "shot", src_meta.get("sequence") or "", target_ver,
+                entity_kind=src_meta.get("entity_kind") or "shot"))
             rdir.mkdir(parents=True, exist_ok=True)
             ext = result.suffix.lower()
             final = rdir / f"{task.get('shot') or 'shot'}_{task.get('task_name') or 'task'}_v{target_ver:03d}{ext}"

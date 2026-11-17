@@ -133,6 +133,15 @@ def init() -> None:
                 created_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_chat_session ON chat_messages(session_id, id);
+
+            CREATE TABLE IF NOT EXISTS project_views (
+                session_id TEXT NOT NULL DEFAULT 'default',
+                project_id TEXT NOT NULL,
+                last_seen_id INTEGER DEFAULT 0,
+                last_seen_at TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (session_id, project_id)
+            );
             """
         )
         cols = {r["name"] for r in c.execute("PRAGMA table_info(tasks)").fetchall()}
@@ -215,6 +224,35 @@ def add_publication(pub: dict[str, Any]) -> int | None:
             return None
 
 
+def update_publication_scan(rec: dict[str, Any]) -> None:
+    """Refresh content/attachments for an existing comment from a full scan.
+
+    The fast event monitor inserts comments without attachments; the next
+    full project scan fills them in. Only actually changed rows are touched,
+    so the UI incremental sync is not flooded.
+    """
+    comment_id = rec.get("comment_id")
+    if not comment_id:
+        return
+    attachments = json.dumps(rec.get("attachments") or [], ensure_ascii=False)
+    execute(
+        """UPDATE publications
+           SET thread_kind=?, task_id=?, version_id=?, version_number=?, author=?,
+               body=?, created_at=?, attachments_json=?, updated_db=?
+           WHERE comment_id=?
+             AND (thread_kind IS NOT ? OR task_id IS NOT ? OR version_id IS NOT ?
+                  OR version_number IS NOT ? OR author IS NOT ? OR body IS NOT ?
+                  OR created_at IS NOT ? OR attachments_json IS NOT ?)""",
+        (rec.get("thread_kind"), rec.get("task_id"), rec.get("version_id"),
+         rec.get("version_number"), rec.get("author"), rec.get("body"),
+         rec.get("created_at"), attachments, now(),
+         comment_id,
+         rec.get("thread_kind"), rec.get("task_id"), rec.get("version_id"),
+         rec.get("version_number"), rec.get("author"), rec.get("body"),
+         rec.get("created_at"), attachments),
+    )
+
+
 def sync_publication_answer(comment_id: str, answered: bool, version_number: int | None = None,
                             version_code: str | None = None) -> None:
     """Keep the "answered by version" flag in sync on repeated scans."""
@@ -264,28 +302,7 @@ def sync_publication_mention(comment_id: str, is_mention: bool) -> None:
     )
 
 
-def list_publications(status: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
-    if status:
-        rows = all("SELECT * FROM publications WHERE status=? ORDER BY created_at DESC, id DESC LIMIT ?",
-                   (status, limit))
-    else:
-        rows = all("SELECT * FROM publications ORDER BY created_at DESC, id DESC LIMIT ?", (limit,))
-    for r in rows:
-        try:
-            r["attachments"] = json.loads(r.get("attachments_json") or "[]")
-        except Exception:
-            r["attachments"] = []
-        try:
-            r["analysis"] = json.loads(r.get("analysis_json") or "null")
-        except Exception:
-            r["analysis"] = None
-    return rows
-
-
-def get_publication(pid: int) -> dict[str, Any] | None:
-    r = one("SELECT * FROM publications WHERE id=?", (pid,))
-    if not r:
-        return None
+def _pub_row(r: dict[str, Any]) -> dict[str, Any]:
     try:
         r["attachments"] = json.loads(r.get("attachments_json") or "[]")
     except Exception:
@@ -295,6 +312,58 @@ def get_publication(pid: int) -> dict[str, Any] | None:
     except Exception:
         r["analysis"] = None
     return r
+
+
+def list_publications(status: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+    if status:
+        rows = all("SELECT * FROM publications WHERE status=? ORDER BY created_at DESC, id DESC LIMIT ?",
+                   (status, limit))
+    else:
+        rows = all("SELECT * FROM publications ORDER BY created_at DESC, id DESC LIMIT ?", (limit,))
+    return [_pub_row(r) for r in rows]
+
+
+def publications_changes(since: str, since_id: int = 0, limit: int = 1000) -> list[dict[str, Any]]:
+    if not since:
+        return []
+    rows = all(
+        """SELECT * FROM publications
+           WHERE updated_db > ? OR (updated_db = ? AND id > ?)
+           ORDER BY updated_db ASC, id ASC LIMIT ?""",
+        (since, since, int(since_id or 0), int(limit)))
+    return [_pub_row(r) for r in rows]
+
+
+def project_publications(project_id: str, date_from: str, date_to: str,
+                         limit: int = 3000) -> list[dict[str, Any]]:
+    rows = all(
+        """SELECT * FROM publications
+           WHERE project_id=? AND substr(created_at,1,10) >= ? AND substr(created_at,1,10) <= ?
+           ORDER BY created_at DESC, id DESC LIMIT ?""",
+        (project_id, date_from, date_to, int(limit)))
+    return [_pub_row(r) for r in rows]
+
+
+def get_project_view(session_id: str, project_id: str) -> dict[str, Any] | None:
+    return one("SELECT * FROM project_views WHERE session_id=? AND project_id=?",
+               (session_id, project_id))
+
+
+def set_project_view(session_id: str, project_id: str, last_seen_id: int,
+                     last_seen_at: str | None) -> None:
+    execute(
+        """INSERT INTO project_views (session_id, project_id, last_seen_id, last_seen_at, updated_at)
+           VALUES (?,?,?,?,?)
+           ON CONFLICT(session_id, project_id) DO UPDATE SET
+             last_seen_id=excluded.last_seen_id,
+             last_seen_at=excluded.last_seen_at,
+             updated_at=excluded.updated_at""",
+        (session_id, project_id, int(last_seen_id or 0), last_seen_at, now()))
+
+
+def get_publication(pid: int) -> dict[str, Any] | None:
+    r = one("SELECT * FROM publications WHERE id=?", (pid,))
+    return _pub_row(r) if r else None
 
 
 def update_publication(pid: int, **fields: Any) -> None:

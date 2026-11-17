@@ -21,6 +21,7 @@ PUBLICATION_RE = re.compile(
     r"версия|version|h3|wan|flux|файл|кадр|рендер|render)",
     re.I,
 )
+NOTE_RE = re.compile(r"^(превью|v\d{1,4}\b|версия\s+v\d+|опубликован)", re.I)
 TZ_RE = re.compile(r"^\s*Сцена\s+\d|Шот сценария|Блок\s+\d", re.I)
 CLIENT_AUTHORS = {"client", "Review", "review-service", "client-review"}
 BOT_AUTHORS = {"a.smirnov", "e.matveev", "j.klimova", "m.karpov", "s.smirnov"}
@@ -59,6 +60,10 @@ def classify_publication(pub: dict[str, Any]) -> dict[str, Any]:
         return {"needs_action": 1, "publication_type": "continuation",
                 "source": "mention",
                 "reason": "приоритетное сообщение с упоминанием @p.robot"}
+
+    if NOTE_RE.search(body) and not ACTION_RE.search(body):
+        return {"needs_action": 0, "publication_type": "version",
+                "source": "rules", "reason": "публикационное сообщение версии"}
 
     analysis = pub.get("analysis")
     if isinstance(analysis, str):

@@ -172,6 +172,7 @@ def _scan_once(projects: list[str] | None = None) -> dict[str, Any]:
                 n += 1
                 new_ids.append(new_id)
             else:
+                db.update_publication_scan(rec)
                 db.sync_publication_mention(rec.get("comment_id"), bool(rec.get("is_mention")))
                 db.sync_publication_answer(
                     rec.get("comment_id"), bool(rec.get("answered_by_version")),
@@ -226,15 +227,55 @@ def _scanner_loop() -> None:
         time.sleep(max(30, interval or 300))
 
 
+def _event_monitor_once() -> dict[str, Any]:
+    cfg = load_config()
+    client = _synx()
+    recs = client.scan_events(limit=int(cfg["synx"].get("event_limit", 200)),
+                              only_mentions=False)
+    new_ids: list[int] = []
+    for rec in recs:
+        new_id = db.add_publication(rec)
+        if new_id:
+            new_ids.append(new_id)
+        else:
+            db.sync_publication_mention(rec.get("comment_id"), bool(rec.get("is_mention")))
+            db.sync_publication_answer(
+                rec.get("comment_id"), bool(rec.get("answered_by_version")),
+                rec.get("answer_version_number"), rec.get("answer_version_code"),
+            )
+    db.set_meta("last_event_sync", db.now())
+    ready = AIClient(cfg).ready
+    if new_ids and cfg["synx"].get("auto_analyze", True) and ready:
+        threading.Thread(target=_auto_analyze, args=(new_ids,), daemon=True,
+                         name="synx-event-autoclassify").start()
+    return {"events": len(recs), "new": len(new_ids)}
+
+
+def _event_monitor_loop() -> None:
+    while True:
+        cfg = load_config()
+        interval = int(cfg["synx"].get("event_interval_sec") or 0)
+        if interval > 0 and cfg["synx"].get("auto_scan", True):
+            try:
+                _event_monitor_once()
+            except Exception as exc:
+                db.set_meta("last_event_sync_error", str(exc)[:1000])
+        time.sleep(max(10, interval or 30))
+
+
 _scanner_thread: threading.Thread | None = None
+_event_thread: threading.Thread | None = None
 
 
 @app.on_event("startup")
 def _startup():
-    global _scanner_thread
+    global _scanner_thread, _event_thread
     if _scanner_thread is None or not _scanner_thread.is_alive():
         _scanner_thread = threading.Thread(target=_scanner_loop, name="synx-scanner", daemon=True)
         _scanner_thread.start()
+    if _event_thread is None or not _event_thread.is_alive():
+        _event_thread = threading.Thread(target=_event_monitor_loop, name="synx-events", daemon=True)
+        _event_thread.start()
 
 
 @app.get("/")
@@ -318,6 +359,11 @@ def synx_scan(body: ScanBody):
 @app.get("/api/publications")
 def publications(status: str | None = None, limit: int = 5000):
     return {"publications": db.list_publications(status, limit)}
+
+
+@app.get("/api/publications/changes")
+def publications_changes(since: str = "", since_id: int = 0, limit: int = 1000):
+    return {"publications": db.publications_changes(since, since_id, limit)}
 
 
 @app.post("/api/publications/{pid}/analyze")
@@ -428,6 +474,7 @@ def create_task_from_publication(pid: int, body: CreateTaskBody | None = None):
     cfg = load_config()
     entity = next((e for e in client.entities(pub["project_id"]) if e.get("id") == pub["entity_id"]), {})
     sequence = entity.get("sequence_name") or ""
+    entity_kind = entity.get("entity_kind") or "shot"
     versions = client.versions(pub["entity_id"])
     source_version = next((v for v in versions if v.get("id") == pub.get("version_id")), None) or (versions[-1] if versions else {})
     next_ver = max([int(v.get("version_number") or 0) for v in versions] + [0]) + 1
@@ -435,9 +482,10 @@ def create_task_from_publication(pid: int, body: CreateTaskBody | None = None):
     target_w, target_h = 2048, 864
     frames = int(media.get("frames") or 144)
     work = task_work_dir(cfg, project.get("alias", "project"), pub.get("shot"), sequence,
-                         task_type, bot_login, task_name, next_ver)
+                         task_type, bot_login, task_name, next_ver, entity_kind=entity_kind)
     work.mkdir(parents=True, exist_ok=True)
-    renders = render_dir(cfg, project.get("alias", "project"), pub.get("shot"), sequence, next_ver)
+    renders = render_dir(cfg, project.get("alias", "project"), pub.get("shot"), sequence,
+                         next_ver, entity_kind=entity_kind)
     renders.mkdir(parents=True, exist_ok=True)
     plan_for_task = {k: v for k, v in plan.items() if not k.startswith("_")}
     plan_for_task["_usage"] = plan.get("_usage")
@@ -761,4 +809,6 @@ def log(limit: int = 200):
 
 @app.get("/api/meta")
 def meta():
-    return {"last_scan": db.get_meta("last_scan"), "db": str(db.DB_PATH), "data": str(DATA_DIR)}
+    return {"last_scan": db.get_meta("last_scan"),
+            "last_event_sync": db.get_meta("last_event_sync"),
+            "db": str(db.DB_PATH), "data": str(DATA_DIR)}

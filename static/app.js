@@ -2,7 +2,8 @@
   "use strict";
 
   var $ = function (id) { return document.getElementById(id); };
-  var state = { config: null, bots: [], pubs: [], tasks: [], activeId: null, view: "publications" };
+  var state = { config: null, bots: [], pubs: [], tasks: [], activeId: null, view: "publications",
+                pubSyncAt: "", pubSyncId: 0 };
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
@@ -643,6 +644,12 @@
       var st = $("pub-status").value;
       var d = await api("/api/publications?limit=5000" + (st ? "&status=" + encodeURIComponent(st) : ""));
       state.pubs = d.publications || [];
+      var maxTs = "", maxId = 0;
+      state.pubs.forEach(function (p) {
+        var ts = String(p.updated_db || "");
+        if (ts > maxTs || (ts === maxTs && Number(p.id) > maxId)) { maxTs = ts; maxId = Number(p.id) || 0; }
+      });
+      state.pubSyncAt = maxTs; state.pubSyncId = maxId;
       renderPublications();
     } catch (e) { toast("Публикации: " + e.message, true); }
   }
@@ -720,6 +727,44 @@
       tr.style.display = ok ? "" : "none";
     });
   }
+  async function pollPublicationChanges() {
+    if (document.hidden || !state.pubSyncAt) return;
+    try {
+      var d = await api("/api/publications/changes?since=" + encodeURIComponent(state.pubSyncAt) +
+                        "&since_id=" + state.pubSyncId + "&limit=1000");
+      var changes = d.publications || [];
+      if (!changes.length) return;
+      var byId = {};
+      state.pubs.forEach(function (p) { byId[p.id] = p; });
+      var newCount = 0;
+      changes.forEach(function (p) {
+        if (!byId[p.id]) newCount += 1;
+        byId[p.id] = p;
+      });
+      var last = changes[changes.length - 1];
+      if (last && last.updated_db) {
+        var ts = String(last.updated_db), id = Number(last.id) || 0;
+        if (ts > state.pubSyncAt || (ts === state.pubSyncAt && id > state.pubSyncId)) {
+          state.pubSyncAt = ts; state.pubSyncId = id;
+        }
+      }
+      state.pubs = Object.keys(byId).map(function (k) { return byId[k]; });
+      state.pubs.sort(function (a, b) {
+        return String(b.created_at || "").localeCompare(String(a.created_at || "")) || (b.id - a.id);
+      });
+      var selected = RobotTables.selected($("pub-table"));
+      renderPublications();
+      if (selected.length && RobotTables.selectIds) RobotTables.selectIds($("pub-table"), selected);
+      updatePubSelected();
+      if (newCount) toast("Новых сообщений synx: " + newCount);
+      try {
+        var meta = await api("/api/meta");
+        $("last-scan").textContent = meta.last_scan ? "scan: " + fmtTime(meta.last_scan) : "scan: ещё не было";
+      } catch (e2) {}
+    } catch (e) { /* silently retry on the next tick */ }
+  }
+  setInterval(pollPublicationChanges, 10000);
+
   function updatePubSelected() {
     var sel = RobotTables.selected($("pub-table"));
     $("pub-selected-count").textContent = sel.length + " выбрано";

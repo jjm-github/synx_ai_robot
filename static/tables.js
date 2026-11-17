@@ -248,6 +248,12 @@
     if (r) r.classList.toggle("selected", !!on);
   }
 
+  function selectIds(table, ids) {
+    var set = {};
+    (ids || []).forEach(function (id) { set[String(id)] = 1; });
+    rows(table).forEach(function (r) { r.classList.toggle("selected", !!set[String(r.dataset.id)]); });
+  }
+
   function selectOnly(table, id) {
     rows(table).forEach(function (r) { setRow(r, String(r.dataset.id) === String(id)); });
     table._anchor = rows(table).find(function (r) { return String(r.dataset.id) === String(id); }) || null;
@@ -293,7 +299,7 @@
   }
 
   window.RobotTables = { init: init, refresh: refresh, filter: filter, selected: selected,
-    selectOnly: selectOnly, closeMenu: closeMenu };
+    selectIds: selectIds, selectOnly: selectOnly, closeMenu: closeMenu };
   document.addEventListener("DOMContentLoaded", function () {
     document.querySelectorAll("table.data").forEach(init);
   });

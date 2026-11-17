@@ -5,7 +5,7 @@ import re
 import shutil
 import time
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +14,7 @@ from PIL import Image
 
 import db
 import fs_tools
+import publish_flow
 import synx_tools
 from ai import AIClient, AIError, _data_url
 from config import ROOT, load_config
@@ -63,9 +64,35 @@ generate_from_synx_version ОДИН раз и передай project, shot, vers
 generate_image. В prompt передавай подробный английский промпт. Если есть
 референс — передай его путь в reference_paths и preserve_aspect=true.
 
+## Публикация кадров из чата
+
+Если пользователь просит «сделай PDF из этих кадров», «опубликуй версию»,
+«создай задачу Art», «назначь бота», «разложи workflow и картинки в рабочую
+папку и render» — вызови publish_images_as_version ОДИН раз. Этот инструмент:
+сам возьмёт последние сгенерированные картинки из чата, соберёт PDF (одна
+картинка на страницу), создаст задачу в synx, выберет и назначит бота по
+скилам из synx API, скопирует картинки и workflow JSON в рабочую папку задачи
+и в render шота, а затем опубликует PDF как версию от имени бота.
+
+Не отвечай, что у тебя нет инструментов создания задачи/назначения/публикации —
+они есть. Если нужен список ботов и их скилов, вызови synx_bots.
+
+Для отдельной склейки картинок в PDF используй make_pdf_from_images (одна
+картинка на страницу). Для создания задачи, раскладки файлов и публикации PDF
+версией используй publish_images_as_version.
+
 Не повторяй один и тот же вызов инструмента с теми же аргументами. Если результата
 достаточно — переходи к генерации или отвечай текстом. Для списков версий
 используй shot/version фильтры и limit не больше 50.
+
+## Сводка по проекту
+
+Если пользователь спрашивает «что нового», «новости», «сводка», «что происходит»,
+«обзор» или «резюме» по проекту — СНАЧАЛА вызови synx_project_news. Этот инструмент
+читает локальную таблицу уже собранных сообщений, сравнивает с прошлым просмотром
+этого чата и возвращает счётчики, топ шотов, действия, упоминания @p.robot и версии.
+На основе результата сделай краткое резюме: что нового за период, где ближайший
+фронт работ, что требует действий, какие были новые версии. Не выдумывай факты.
 """
 
 IMAGE_TOOL = {
@@ -132,6 +159,57 @@ VERSION_GEN_TOOL = {
     },
 }
 
+PUBLISH_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "publish_images_as_version",
+        "description": ("Take the latest generated images from this chat (or explicit image_paths), "
+                        "build a multi-page PDF (one image per page), create a synx task "
+                        "(default type Art), assign a configured bot by its synx skills, copy the "
+                        "images and workflow JSONs into the bot task work folder and the shot render "
+                        "folder, and publish the PDF as a new version from that bot. Use this for "
+                        "requests like 'сделай PDF из этих кадров, создай задачу Art, назначь бота и "
+                        "опубликуй версию'."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "description": "Project alias/name/id; inferred from chat if omitted"},
+                "shot": {"type": "string", "description": "Shot/entity name; inferred from recent chat if omitted"},
+                "version": {"type": "string", "description": "Source version, e.g. v004; latest if omitted"},
+                "task_name": {"type": "string", "default": "cubism_frames"},
+                "task_type": {"type": "string", "default": "Art"},
+                "bot": {"type": "string", "description": "Bot login; if omitted the best available bot is chosen by skills"},
+                "comment": {"type": "string", "description": "Task comment"},
+                "version_comment": {"type": "string", "description": "Comment for the published version"},
+                "pdf_name": {"type": "string", "description": "PDF filename without extension"},
+                "image_source": {"type": "string", "enum": ["last_chat_images", "paths"],
+                                 "default": "last_chat_images"},
+                "image_paths": {"type": "array", "items": {"type": "string"}},
+                "dry_run": {"type": "boolean", "default": False},
+            },
+        },
+    },
+}
+
+PDF_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "make_pdf_from_images",
+        "description": ("Combine several images into a multi-page PDF, one image per page. "
+                        "Use it when the user asks to glue frames into a PDF without publishing. "
+                        "By default takes the latest generated images from this chat."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "image_source": {"type": "string", "enum": ["last_chat_images", "paths"],
+                                 "default": "last_chat_images"},
+                "image_paths": {"type": "array", "items": {"type": "string"}},
+                "pdf_name": {"type": "string", "description": "Output PDF name without extension"},
+            },
+        },
+    },
+}
+
 SYNX_TOOLS = [
     {
         "type": "function",
@@ -139,6 +217,42 @@ SYNX_TOOLS = [
             "name": "synx_projects",
             "description": "List synx projects.",
             "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "synx_bots",
+            "description": ("List configured bots (with password availability) and their synx skills. "
+                            "Use it to choose an assignee for a task."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string"},
+                    "task_id": {"type": "string"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "synx_project_news",
+            "description": ("Summarise new synx messages already collected in the local scan table "
+                            "for a project and period. Use this FIRST when the user asks what is new, "
+                            "a digest or the current front of work. It compares with the last view of "
+                            "this chat session and returns counts, top shots, actions, @p.robot mentions, "
+                            "latest versions and a text digest."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string"},
+                    "date_from": {"type": "string", "description": "YYYY-MM-DD inclusive"},
+                    "date_to": {"type": "string", "description": "YYYY-MM-DD inclusive"},
+                    "mark_seen": {"type": "boolean", "default": True},
+                },
+                "required": ["project"],
+            },
         },
     },
     {
@@ -247,13 +361,14 @@ FS_TOOLS = [
     }},
 ]
 
-TOOLS = [IMAGE_TOOL, VERSION_GEN_TOOL] + SYNX_TOOLS + FS_TOOLS
+TOOLS = [IMAGE_TOOL, VERSION_GEN_TOOL, PDF_TOOL, PUBLISH_TOOL] + SYNX_TOOLS + FS_TOOLS
 GEN_RE = re.compile(
     r"(нарисуй|сгенер|сгенерируй|сделай\s+(картин|изображ|кадр|арт)|"
     r"draw|generate\s+(an?\s+)?image|make\s+(an?\s+)?image|create\s+(an?\s+)?image)",
     re.I,
 )
 PLAYLIST_RE = re.compile(r"(плейлист|playlist)", re.I)
+NEWS_RE = re.compile(r"(что\s+нового|новост|сводк|что\s+происход|обзор|резюме|какие\s+новости)", re.I)
 
 
 def _synx_guide() -> str:
@@ -480,7 +595,14 @@ def generate_image(prompt: str, negative: str = "", images: list[dict[str, Any]]
         except Exception:
             shutil.copy2(p, dst)
         item = {"name": dst.name, "path": str(dst), "url": f"/api/chat/file/images/{dst.name}",
-                "width": out_w, "height": out_h, "workflow": workflow}
+                "width": out_w, "height": out_h, "workflow": workflow,
+                "prompt": prompt, "negative": negative, "seed": seed, "steps": steps,
+                "cfg": cfg_value, "denoise": denoise, "models": models,
+                "workflow_config": {"profile": workflow, "steps": steps, "cfg": cfg_value,
+                                    "denoise": denoise, "megapixels": megapixels,
+                                    "preserve_aspect": bool(refs and preserve_aspect),
+                                    "style": style, "models": models},
+                "workflow_json": wf}
         result.append(item)
         if progress:
             progress({"type": "image", "text": "Изображение готово", "image": item})
@@ -493,6 +615,93 @@ def _detect_style(text: str) -> str:
         if key in low:
             return STYLE_ALIASES[key]
     return ""
+
+
+def _period_from_text(text: str) -> tuple[date, date, str]:
+    today = date.today()
+    low = (text or "").lower()
+    m = re.search(r"с\s*(\d{4}-\d{2}-\d{2})\s*(?:по|до)\s*(\d{4}-\d{2}-\d{2})", low)
+    if m:
+        try:
+            return (date.fromisoformat(m.group(1)), date.fromisoformat(m.group(2)), "указанный период")
+        except Exception:
+            pass
+    if "сегодня" in low:
+        return today, today, "сегодня"
+    if "вчера" in low:
+        y = today - timedelta(days=1)
+        return y, y, "вчера"
+    m = re.search(r"за\s+(\d+)\s*(дн|день|дня|недел)", low)
+    if m:
+        n = max(1, int(m.group(1)))
+        days = 7 * n if "недел" in m.group(2) else n
+        return today - timedelta(days=days - 1), today, f"за {days} дн."
+    if "недел" in low:
+        return today - timedelta(days=6), today, "за неделю"
+    if "месяц" in low or "30 дн" in low:
+        return today - timedelta(days=29), today, "за месяц"
+    return today - timedelta(days=6), today, "за 7 дней"
+
+
+def _news_request(text: str) -> dict[str, Any] | None:
+    if not NEWS_RE.search(text or ""):
+        return None
+    m = re.search(r"(?:в|по)\s+проект[еа]?\s+([A-Za-z0-9_.-]+)", text or "", re.I)
+    project = m.group(1) if m else None
+    cfg = load_config()
+    if not project:
+        low = (text or "").lower()
+        project = next((str(a) for a in (cfg.get("synx", {}).get("projects") or [])
+                        if str(a).lower() in low), None)
+    if not project:
+        projects = cfg.get("synx", {}).get("projects") or []
+        if len(projects) == 1:
+            project = projects[0]
+    if not project:
+        return None
+    d0, d1, label = _period_from_text(text or "")
+    return {"project": project, "date_from": d0.isoformat(),
+            "date_to": d1.isoformat(), "label": label}
+
+
+def _publish_request(text: str) -> bool:
+    low = (text or "").lower()
+    if not re.search(r"(пдф|pdf)", low, re.I):
+        return False
+    if not any(k in low for k in ("опублик", "верси", "задач", "render")):
+        return False
+    if not any(k in low for k in ("сделай", "создай", "собери", "опубликуй")):
+        return False
+    return any(k in low for k in ("кадр", "картин", "изображ", "эти", "этого", "пять", "5"))
+
+
+def _guess_task_type(text: str) -> str:
+    m = re.search(r"тип[а]?\s+([A-Za-z][A-Za-z0-9_]+)", text or "", re.I)
+    if m:
+        return m.group(1)
+    return "Art"
+
+
+def _guess_task_name(text: str) -> str:
+    low = (text or "").lower()
+    if "кубизм" in low or "cubis" in low:
+        return "cubism_frames"
+    if "пдф" in low or "pdf" in low:
+        return "frames_pdf"
+    return "cubism_frames"
+
+
+def _guess_bot(text: str) -> str | None:
+    low = (text or "").lower()
+    try:
+        from config import load_bots
+        for b in load_bots():
+            login = str(b.get("login") or "")
+            if login and login.lower() in low:
+                return login
+    except Exception:
+        pass
+    return None
 
 
 def _version_request(text: str) -> dict[str, Any] | None:
@@ -663,7 +872,8 @@ def _history_messages(session_id: str) -> list[dict[str, Any]]:
 
 
 def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
-                  progress=None) -> tuple[Any, list[dict[str, Any]], str | None]:
+                  progress=None, session_id: str | None = None
+                  ) -> tuple[Any, list[dict[str, Any]], str | None]:
     """Returns (tool_result, generated_images, playlist_text)."""
     if name == "generate_image":
         prompt = (args.get("prompt") or "").strip() or "A detailed cinematic image"
@@ -678,6 +888,41 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
         return result, generated, None
     if name == "synx_projects":
         return synx_tools.projects(), [], None
+    if name == "synx_bots":
+        return publish_flow.list_bots(args.get("project"), args.get("task_id")), [], None
+    if name == "synx_project_news":
+        return synx_tools.project_news(
+            args.get("project") or "", args.get("date_from"), args.get("date_to"),
+            session_id=session_id or "default",
+            mark_seen=bool(args.get("mark_seen", True))), [], None
+    if name == "make_pdf_from_images":
+        if args.get("image_source") == "paths":
+            imgs = [{"path": p} for p in (args.get("image_paths") or [])]
+        else:
+            imgs = publish_flow.last_generated_images(session_id or "default")
+        imgs = publish_flow._valid_images(imgs)
+        if not imgs:
+            return {"error": "no images for PDF"}, [], None
+        out_dir = ROOT / "data" / "chat" / "pdf"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        name = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(args.get("pdf_name") or "frames")).strip("_") or "frames"
+        pdf = publish_flow.make_pdf([i["path"] for i in imgs], out_dir / (name + ".pdf"))
+        return {"ok": True, "pdf": str(pdf), "pages": len(imgs),
+                "images": [i["path"] for i in imgs]}, [], None
+    if name == "publish_images_as_version":
+        explicit = None
+        if args.get("image_source") == "paths":
+            explicit = [{"path": p} for p in (args.get("image_paths") or [])]
+        result = publish_flow.publish_images_as_version(
+            project=args.get("project"), shot=args.get("shot"), version=args.get("version"),
+            images=explicit, session_id=session_id or "default",
+            task_name=args.get("task_name") or "cubism_frames",
+            task_type=args.get("task_type") or "Art",
+            bot_login=args.get("bot"), comment=args.get("comment") or "",
+            version_comment=args.get("version_comment") or "",
+            pdf_name=args.get("pdf_name") or "", dry_run=bool(args.get("dry_run")),
+            progress=progress)
+        return result, [], None
     if name == "synx_find_version":
         try:
             return synx_tools.find_version(args.get("project") or "", args.get("shot") or "",
@@ -739,6 +984,81 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
     content = ""
     tool_used = False
     ai_error = False
+
+    # Explicit "make a PDF from these frames and publish a version" requests.
+    if _publish_request(text or ""):
+        try:
+            emit({"type": "stage", "text": "Собираю PDF и готовлю публикацию..."})
+            result = publish_flow.publish_images_as_version(
+                project=None, shot=None, version=None, images=None,
+                session_id=session_id,
+                task_name=_guess_task_name(text or ""),
+                task_type=_guess_task_type(text or ""),
+                bot_login=_guess_bot(text or ""),
+                comment=(text or "")[:700],
+                version_comment="PDF: кадры по одному на страницу",
+                pdf_name=_guess_task_name(text or ""),
+                progress=emit)
+            if result.get("dry_run"):
+                content = (f"PDF собран: {result.get('pdf')} "
+                           f"({result.get('source_version')} → v{result.get('target_version')}).")
+            else:
+                corrected = (f" В запросе был проект {result.get('requested_project')}, "
+                             f"шот нашёлся в {result.get('project')}." if result.get("project_corrected") else "")
+                content = (
+                    f"Готово. Собрал PDF: {len(result.get('images') or [])} страниц, "
+                    f"размер страницы {result.get('page_size')}.{corrected}\n\n"
+                    f"- Задача: **{result.get('task_type')}** «{result.get('task_name')}» "
+                    f"(synx `{result.get('synx_task_id')}`)\n"
+                    f"- Исполнитель: **{result.get('bot')}** ({result.get('bot_skills') or 'бот'})\n"
+                    f"- Рабочая папка: `{result.get('work_dir')}`\n"
+                    f"- Render: `{result.get('render_dir')}`\n"
+                    f"- PDF: `{result.get('pdf')}`\n"
+                    f"- Опубликована версия: **{result.get('version_code')}**\n"
+                    f"- Ссылка: {result.get('url') or '—'}"
+                )
+        except Exception as exc:
+            content = f"Не удалось собрать PDF и опубликовать версию: {exc}"
+        emit({"type": "stage", "text": "Готово"})
+        db.add_chat_message(session_id, "assistant", content, generated=[],
+                            usage=usage, playlist_text=None, progress=stages)
+        return {"messages": db.list_chat_messages(session_id), "usage": usage,
+                "generated": [], "playlist_text": None, "stages": stages}
+
+    # Questions like "what is new in project X" are answered from the local
+    # scan table (with a per-chat seen checkpoint), not by a blind tool loop.
+    news_req = _news_request(text or "")
+    if news_req:
+        try:
+            emit({"type": "stage", "text": "Смотрю таблицу сообщений synx..."})
+            news = synx_tools.project_news(
+                news_req["project"], news_req["date_from"], news_req["date_to"],
+                session_id=session_id, mark_seen=True)
+            emit({"type": "stage", "text": "Сравниваю с прошлым просмотром и готовлю резюме..."})
+            content = news.get("digest") or "В таблице нет сообщений за этот период."
+            if ai.ready:
+                summary, u = ai.chat([
+                    {"role": "system", "content":
+                     "Ты — продюсер студии Synx. Отвечай по-русски, кратко и структурно. "
+                     "Используй только данные из таблицы ниже, не выдумывай факты."},
+                    {"role": "user", "content":
+                     f"Запрос пользователя: {text}\n\n"
+                     f"Данные локальной таблицы сообщений synx:\n{news.get('digest') or ''}\n\n"
+                     "Сделай резюме: 1) что нового за период; 2) ближайший фронт работ по шотам; "
+                     "3) что требует действий, отдельно упоминания @p.robot; 4) новые версии. "
+                     "Если новых с прошлого просмотра 0 — скажи это. Не перечисляй всё подряд."},
+                ])
+                usage["input"] += int(u.get("input") or 0)
+                usage["output"] += int(u.get("output") or 0)
+                if (summary or "").strip():
+                    content = summary.strip()
+        except Exception as exc:
+            content = f"Не удалось посмотреть таблицу сообщений: {exc}"
+        emit({"type": "stage", "text": "Готово"})
+        db.add_chat_message(session_id, "assistant", content, generated=[],
+                            usage=usage, playlist_text=None, progress=stages)
+        return {"messages": db.list_chat_messages(session_id), "usage": usage,
+                "generated": [], "playlist_text": None, "stages": stages}
 
     # Explicit "find version X and generate from it" requests are handled
     # deterministically: lookup + reference frame + FLUX.3 restyle in one pass.
@@ -811,7 +1131,8 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
                     seen_calls.add(signature)
                     try:
                         emit({"type": "stage", "text": f"Инструмент: {name}"})
-                        result, gen, pl = _execute_tool(name, args, images, progress=emit)
+                        result, gen, pl = _execute_tool(name, args, images, progress=emit,
+                                                        session_id=session_id)
                         generated.extend(gen)
                         if pl:
                             playlist_text = pl

@@ -190,11 +190,11 @@ class SynxClient:
         s.cookies.update(self.s.cookies.get_dict())
         return s
 
-    def scan_mention_events(self, limit: int = 1000) -> list[dict[str, Any]]:
-        """Recent synx events (tag/comment) that address @p.robot.
+    def scan_events(self, limit: int = 1000, only_mentions: bool = False) -> list[dict[str, Any]]:
+        """Recent synx comment/tag events, optionally only @p.robot mentions.
 
-        The event feed is global, so this catches mentions outside the
-        configured project scans as well. Failures are non-fatal.
+        The event feed is global, so this catches new comments faster than a
+        full entity scan. Failures are non-fatal.
         """
         try:
             data = self._get(f"/api/events?limit={int(limit)}")
@@ -214,7 +214,8 @@ class SynxClient:
             body = (event.get("comment_body") or event.get("message")
                     or event.get("review_comment") or "")
             actor = event.get("actor_short") or event.get("actor_name") or ""
-            if not _is_robot_mention(body, actor):
+            is_mention = _is_robot_mention(body, actor)
+            if only_mentions and not is_mention:
                 continue
             comment_id = event.get("comment_id")
             entity_id = event.get("entity_id")
@@ -242,12 +243,15 @@ class SynxClient:
                 "created_at": event.get("created_at"),
                 "attachments": [],
                 "status": "new",
-                "is_mention": 1,
+                "is_mention": 1 if is_mention else 0,
                 "answered_by_version": 0,
                 "answer_version_number": None,
                 "answer_version_code": None,
             })
         return out
+
+    def scan_mention_events(self, limit: int = 1000) -> list[dict[str, Any]]:
+        return self.scan_events(limit, only_mentions=True)
 
     def scan_project(self, project_alias: str,
                      progress: Callable[[str], None] | None = None,

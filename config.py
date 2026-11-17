@@ -30,6 +30,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "auto_scan": True,
         "auto_analyze": True,
         "scan_interval_sec": 300,
+        "event_interval_sec": 30,
+        "event_limit": 200,
     },
     "comfy": {
         "root": "~/opt/ComfyUI",

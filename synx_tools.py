@@ -9,6 +9,7 @@ from typing import Any
 
 from PIL import Image
 
+import db
 from config import ROOT, load_config
 from synx import SynxClient
 
@@ -219,6 +220,150 @@ def prepare_reference(project: str, shot: str, version: str | None = None,
     return {"path": str(dst), "width": width, "height": height,
             "aspect_ratio": round(width / height, 6) if height else None,
             "frame": frame, "version": info}
+
+
+def _project_from_table(project: str) -> tuple[str, str] | None:
+    text = str(project or "").strip()
+    if not text:
+        return None
+    row = db.one(
+        """SELECT project_id, project_alias FROM publications
+           WHERE lower(project_alias)=lower(?) OR project_id=? LIMIT 1""",
+        (text, text))
+    if row:
+        return str(row["project_id"]), str(row["project_alias"] or text)
+    row = db.one(
+        """SELECT project_id, project_alias, count(*) AS c FROM publications
+           WHERE lower(project_alias) LIKE ?
+           GROUP BY project_id, project_alias ORDER BY c DESC LIMIT 1""",
+        (f"%{text.lower()}%",))
+    if row:
+        return str(row["project_id"]), str(row["project_alias"] or text)
+    return None
+
+
+def project_news(project: str, date_from: str | None = None, date_to: str | None = None,
+                 session_id: str = "default", mark_seen: bool = True,
+                 limit: int = 3000) -> dict[str, Any]:
+    """Summarise messages already collected in the local scan table."""
+    d1 = _date(date_to, date.today()) or date.today()
+    d0 = _date(date_from, d1 - timedelta(days=6)) or (d1 - timedelta(days=6))
+    found = _project_from_table(project)
+    if not found:
+        c = client()
+        p = _project(c, project)
+        found = (str(p["id"]), str(p.get("alias") or project))
+    project_id, project_alias = found
+    rows = db.project_publications(project_id, d0.isoformat(), d1.isoformat(), limit)
+    view = db.get_project_view(session_id, project_id) or {}
+    last_seen_id = int(view.get("last_seen_id") or 0)
+    first_view = last_seen_id <= 0
+    new_rows = [r for r in rows if int(r.get("id") or 0) > last_seen_id]
+
+    def answered(r):
+        return bool(r.get("answered_by_version"))
+
+    def actionable(r):
+        return (r.get("needs_action") == 1 and not answered(r)
+                and r.get("publication_type") != "version")
+
+    continuations = [r for r in rows if actionable(r)]
+    mentions = [r for r in rows if r.get("is_mention") and not answered(r)]
+    answered_rows = [r for r in rows if answered(r)]
+    versions = [r for r in rows if r.get("publication_type") == "version"]
+    unknown = [r for r in rows if r.get("needs_action") is None]
+
+    groups: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        shot = str(r.get("shot") or "—")
+        g = groups.setdefault(shot, {"shot": shot, "total": 0, "continuation": 0,
+                                     "mentions": 0, "versions": 0, "answered": 0,
+                                     "last_at": ""})
+        g["total"] += 1
+        if actionable(r):
+            g["continuation"] += 1
+        if r.get("is_mention") and not answered(r):
+            g["mentions"] += 1
+        if r.get("publication_type") == "version":
+            g["versions"] += 1
+        if answered(r):
+            g["answered"] += 1
+        if str(r.get("created_at") or "") > g["last_at"]:
+            g["last_at"] = str(r.get("created_at") or "")
+    top_shots = sorted(groups.values(), key=lambda g: (g["continuation"] + g["mentions"],
+                                                        g["total"], g["last_at"]), reverse=True)[:20]
+
+    def brief(r: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": r.get("id"), "shot": r.get("shot"), "author": r.get("author"),
+            "created_at": r.get("created_at"), "thread_kind": r.get("thread_kind"),
+            "version": r.get("version_number"),
+            "type": ("упоминание @p.robot" if r.get("is_mention") else
+                     ("отвечено" if answered(r) else ("продолжение" if actionable(r) else "версия"))),
+            "body": (str(r.get("body") or "").replace("\n", " ")[:320]),
+        }
+
+    actions = sorted(continuations, key=lambda r: (bool(r.get("is_mention")),
+                                                   str(r.get("created_at") or "")), reverse=True)[:40]
+    mention_items = sorted(mentions, key=lambda r: str(r.get("created_at") or ""), reverse=True)[:20]
+    latest_versions = sorted([r for r in versions if r.get("version_number") is not None],
+                             key=lambda r: str(r.get("created_at") or ""), reverse=True)[:20]
+    new_items = sorted(new_rows, key=lambda r: (str(r.get("created_at") or ""), int(r.get("id") or 0)),
+                       reverse=True)[:30]
+
+    lines = [
+        f"Проект: {project_alias}",
+        f"Период: {d0.isoformat()} .. {d1.isoformat()}",
+        f"Всего сообщений в таблице: {len(rows)}",
+        f"Новых с прошлого просмотра: {len(new_rows)}" + (" (первый просмотр)" if first_view else ""),
+        f"Продолжения/требуют действий: {len(continuations)}",
+        f"Упоминания @p.robot: {len(mentions)}",
+        f"Отвечено версией: {len(answered_rows)}",
+        f"Версии/публикации: {len(versions)}",
+        f"Не разобрано: {len(unknown)}",
+        "", "Фронт работ по шотам:",
+    ]
+    for g in top_shots[:12]:
+        lines.append(f"- {g['shot']}: всего {g['total']}, продолжений {g['continuation']}, "
+                     f"упоминаний {g['mentions']}, версий {g['versions']}")
+    lines.append("")
+    lines.append("Требуют действий (последние):")
+    for r in actions[:20]:
+        mark = " @p.robot" if r.get("is_mention") else ""
+        lines.append(f"- [{r.get('shot')}] {r.get('author')} {str(r.get('created_at') or '')[:16]}{mark}: "
+                     f"{str(r.get('body') or '').replace(chr(10), ' ')[:220]}")
+    if mention_items:
+        lines.append("")
+        lines.append("Упоминания @p.robot:")
+        for r in mention_items[:12]:
+            lines.append(f"- [{r.get('shot')}] {r.get('author')}: "
+                         f"{str(r.get('body') or '').replace(chr(10), ' ')[:220]}")
+    if latest_versions:
+        lines.append("")
+        lines.append("Последние версии:")
+        for r in latest_versions[:12]:
+            lines.append(f"- [{r.get('shot')}] v{int(r.get('version_number') or 0):03d} "
+                         f"{str(r.get('created_at') or '')[:16]}: "
+                         f"{str(r.get('body') or '').replace(chr(10), ' ')[:160]}")
+
+    if mark_seen and rows:
+        top_id = max(int(r.get("id") or 0) for r in rows)
+        top_at = max(str(r.get("created_at") or "") for r in rows)
+        db.set_project_view(session_id, project_id, top_id, top_at)
+
+    return {
+        "project": project_alias, "project_id": project_id,
+        "date_from": d0.isoformat(), "date_to": d1.isoformat(),
+        "total": len(rows), "new_since_last": len(new_rows), "first_view": first_view,
+        "counts": {"continuation": len(continuations), "mentions": len(mentions),
+                   "answered": len(answered_rows), "versions": len(versions),
+                   "unknown": len(unknown)},
+        "top_shots": top_shots, "actions": [brief(r) for r in actions],
+        "mentions": [brief(r) for r in mention_items],
+        "latest_versions": [brief(r) for r in latest_versions],
+        "new_items": [brief(r) for r in new_items],
+        "digest": "\n".join(lines),
+    }
 
 
 def tasks(project: str, status: str | None = None, limit: int = 300) -> dict[str, Any]:
