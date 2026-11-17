@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Synx AI Robot</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/theme.js"></script>
+</head>
+<body>
+<div id="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">SR</div>
+      <div>
+        <div class="brand-title">Synx AI Robot</div>
+        <div class="brand-sub">production assistant</div>
+      </div>
+    </div>
+    <nav class="nav">
+      <button class="nav-btn active" data-view="publications">Публикации</button>
+      <button class="nav-btn" data-view="tasks">Задачи</button>
+      <button class="nav-btn" data-view="chat">Чат</button>
+      <button class="nav-btn" data-view="settings">Настройки</button>
+    </nav>
+    <div class="side-status">
+      <div class="status-line"><span id="synx-dot" class="dot"></span><span id="synx-status">synx: не проверен</span></div>
+      <div class="status-line"><span id="pipeline-dot" class="dot"></span><span id="pipeline-status">конвейер: остановлен</span></div>
+      <div class="side-meta" id="last-scan">—</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <h1 id="view-title">Публикации</h1>
+        <div class="muted" id="view-subtitle">Новые комментарии и review-замечания из synx</div>
+      </div>
+      <div class="top-actions">
+        <button class="theme-btn" id="theme-btn" title="Цветовая схема" type="button">◐</button>
+        <button class="btn" id="scan-btn">Сканировать synx</button>
+        <button class="btn primary" id="pipeline-toggle">Запустить конвейер</button>
+      </div>
+    </header>
+
+    <section class="view active" id="view-publications">
+      <div class="toolbar">
+        <input class="input grow" id="pub-filter" placeholder="Фильтр по шоту, автору, тексту...">
+        <select class="input" id="pub-status">
+          <option value="">все статусы</option>
+          <option value="new">новые</option>
+          <option value="analyzed">разобраны</option>
+          <option value="task_created">задача создана</option>
+          <option value="no_task">без задачи</option>
+          <option value="analysis_error">ошибка анализа</option>
+        </select>
+        <button class="btn" id="pub-refresh">Обновить</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data" id="pub-table" data-default-hidden="">
+          <thead>
+            <tr>
+              <th data-col="project">Проект</th>
+              <th data-col="shot">Шот</th>
+              <th data-col="thread">Тред</th>
+              <th data-col="version">Версия</th>
+              <th data-col="author">Автор</th>
+              <th data-col="body">Комментарий</th>
+              <th data-col="attachments">Референсы</th>
+              <th data-col="status">Статус</th>
+              <th data-col="actions">Действия</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="hint">ПКМ по заголовку — ширины и видимость колонок. Двойной клик по строке — открыть план .md.</div>
+      <div class="bulkbar">
+        <button class="btn" id="pub-analyze-selected">Разобрать выбранные</button>
+        <button class="btn primary" id="pub-create-selected">Создать задачи</button>
+        <span class="muted" id="pub-selected-count">0 выбрано</span>
+      </div>
+    </section>
+
+    <section class="view" id="view-tasks">
+      <div class="toolbar">
+        <input class="input grow" id="task-filter" placeholder="Фильтр по шоту, задаче, боту, этапу...">
+        <select class="input" id="task-status">
+          <option value="">все статусы</option>
+          <option value="queued">queued</option>
+          <option value="running">running</option>
+          <option value="paused">paused</option>
+          <option value="skipped">skipped</option>
+          <option value="done">done</option>
+          <option value="error">error</option>
+        </select>
+        <button class="btn" id="task-refresh">Обновить</button>
+        <button class="btn" id="task-delete-done">Удалить выполненные</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data" id="task-table" data-default-hidden="">
+          <thead>
+            <tr>
+              <th data-col="id">#</th>
+              <th data-col="shot">Шот</th>
+              <th data-col="task">Задача</th>
+              <th data-col="type">Тип</th>
+              <th data-col="bot">Бот</th>
+              <th data-col="status">Статус</th>
+              <th data-col="stage">Этап</th>
+              <th data-col="progress">Прогресс</th>
+              <th data-col="tokens">Токены</th>
+              <th data-col="time">Время</th>
+              <th data-col="updated">Обновлено</th>
+              <th data-col="actions">Действия</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="hint">ПКМ по строке — действия. Активная задача обновляется каждые 5 секунд.</div>
+    </section>
+
+
+    <section class="view" id="view-chat">
+      <div class="chat-shell">
+        <div class="chat-head">
+          <div>
+            <div class="chat-title">Чат с моделью</div>
+            <div class="muted">Можно прикреплять референсы и просить сгенерировать изображение в ComfyUI.</div>
+          </div>
+          <div class="chat-head-actions">
+            <select class="input" id="chat-session"></select>
+            <button class="btn" id="chat-new">Новый чат</button>
+            <button class="btn" id="chat-clear">Очистить</button>
+          </div>
+        </div>
+        <div class="chat-messages" id="chat-messages"></div>
+        <div class="chat-composer">
+          <div class="chat-chips" id="chat-chips"></div>
+          <textarea class="input chat-input" id="chat-input" rows="3" placeholder="Напиши вопрос или попроси: «нарисуй ... по этим референсам»"></textarea>
+          <div class="chat-actions">
+            <label class="btn attach-btn">+ Референс<input type="file" id="chat-files" accept="image/*" multiple hidden></label>
+            <button class="btn primary" id="chat-send">Отправить</button>
+            <span class="muted" id="chat-hint">Enter — отправить, Shift+Enter — новая строка</span>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="view" id="view-settings">
+      <div class="settings-grid">
+        <div class="card">
+          <h2>AI провайдер</h2>
+          <label>Base URL<input class="input" id="ai-base"></label>
+          <label>API key<input class="input" id="ai-key" type="password"></label>
+          <label>Model<input class="input" id="ai-model"></label>
+          <div class="row2">
+            <label>Temperature<input class="input" id="ai-temp" type="number" step="0.1"></label>
+            <label>Max tokens<input class="input" id="ai-max" type="number"></label>
+          </div>
+          <div class="row-actions">
+            <button class="btn" id="ai-test">Проверить AI</button>
+            <span class="muted" id="ai-test-result"></span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Synx</h2>
+          <label>Base URL<input class="input" id="synx-base"></label>
+          <div class="row2">
+            <label>Логин<input class="input" id="synx-login"></label>
+            <label>Пароль<input class="input" id="synx-password" type="password"></label>
+          </div>
+          <label>Проекты (alias через запятую)<input class="input" id="synx-projects"></label>
+          <div class="row2">
+            <label>Интервал сканирования, сек<input class="input" id="synx-scan" type="number"></label>
+            <label>Потоков сканирования<input class="input" id="synx-workers" type="number"></label>
+          </div>
+          <div class="row2">
+            <label class="check"><input type="checkbox" id="synx-auto-scan"> Автосканирование</label>
+            <label class="check"><input type="checkbox" id="synx-task-comments"> Комментарии задач</label>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>ComfyUI</h2>
+          <label>Root<input class="input" id="comfy-root"></label>
+          <label>Base URL<input class="input" id="comfy-base"></label>
+          <div class="row2">
+            <label>Input dir<input class="input" id="comfy-input"></label>
+            <label>Output dir<input class="input" id="comfy-output"></label>
+          </div>
+          <label>Workflow JSON (необязательно)<input class="input" id="comfy-workflow"></label>
+          <label>Таймаут, сек<input class="input" id="comfy-timeout" type="number"></label>
+        </div>
+
+        <div class="card">
+          <h2>Конвейер</h2>
+          <label class="check"><input type="checkbox" id="pipe-publish"> Публиковать версии автоматически</label>
+          <label>Интервал обновления таблицы, сек<input class="input" id="pipe-poll" type="number"></label>
+          <label>Рабочая папка<input class="input" id="pipe-work"></label>
+          <div class="muted">Остановка конвейера завершает текущий этап; повторный запуск продолжит очередь.</div>
+        </div>
+
+        <div class="card">
+          <h2>Пути производства</h2>
+          <label>Projects root<input class="input" id="paths-root"></label>
+          <label>Colossus layout<input class="input" id="layout-colossus"></label>
+          <label>Liberia layout<input class="input" id="layout-liberia"></label>
+          <label>Default layout<input class="input" id="layout-default"></label>
+          <label>Obsidian vault (опционально)<input class="input" id="obsidian-vault"></label>
+          <div class="muted">Шаблоны: {sequence}, {shot}, {project}. Work: {task_type}/work/{bot}/{task_name}_vXXX. Render: render/vXXX.</div>
+        </div>
+
+        <div class="card wide">
+          <h2>Системный промпт</h2>
+          <textarea class="input mono" id="system-prompt" rows="16"></textarea>
+        </div>
+
+        <div class="card wide">
+          <h2>Боты</h2>
+          <div class="table-wrap short">
+            <table class="data" id="bots-table">
+              <thead><tr><th data-col="login">Логин</th><th data-col="password">Пароль</th><th data-col="user_id">User ID</th><th data-col="role">Роль</th><th data-col="enabled">Вкл</th><th data-col="actions">—</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div class="row-actions"><button class="btn" id="bot-add">Добавить бота</button></div>
+        </div>
+      </div>
+      <div class="settings-actions">
+        <button class="btn primary" id="settings-save">Сохранить настройки</button>
+        <button class="btn" id="settings-save-bots">Сохранить ботов</button>
+        <span class="muted" id="settings-result"></span>
+      </div>
+    </section>
+
+
+    <div id="image-viewer" class="image-viewer hidden">
+      <div class="viewer-top"><span id="viewer-title">Просмотр</span><button class="btn ghost" id="viewer-close">×</button></div>
+      <div class="viewer-stage" id="viewer-stage"><img id="viewer-img" alt=""></div>
+      <div class="viewer-hint">Колесо — зум · средняя кнопка + движение — панорама · средний клик — сброс · ПКМ — действия</div>
+    </div>
+    <div id="image-ctx" class="ctx-menu">
+      <div class="ctx-item" id="img-save">Сохранить как...</div>
+      <div class="ctx-item" id="img-copy">Копировать изображение</div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+    <div id="ctx-menu" class="ctx-menu"></div>
+    <div id="modal" class="modal hidden"><div class="modal-card"><div class="modal-head"><h2 id="modal-title"></h2><button class="btn ghost" id="modal-close">×</button></div><div id="modal-body" class="modal-body"></div><div class="modal-foot" id="modal-foot"></div></div></div>
+  </main>
+</div>
+<script src="/static/marked.min.js"></script>
+<script src="/static/purify.min.js"></script>
+<script src="/static/tables.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
