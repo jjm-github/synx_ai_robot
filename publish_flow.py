@@ -11,7 +11,10 @@ from typing import Any, Callable
 
 from PIL import Image, ImageOps, ImageStat
 
+import daily_pdf
+from daily_pdf import _models_text, _generation_text
 import db
+import system_info
 from config import DATA_DIR, load_bots, load_config
 from links import version_url
 from paths import render_dir, task_work_dir
@@ -685,3 +688,168 @@ def repair_pdf_task(task_id: int, page_size: str = "A4", margin_mm: float = 10.0
             "images": [str(p) for p in copied],
             "media": media, "media_kind": media_kind, "warning": warning,
             "repaired_from": task.get("version_code")}
+
+
+def _daily_comment(items: list[dict[str, Any]], hw: dict[str, Any], pages: int) -> str:
+    lines = [f"DAILY PDF: {pages} страниц (1 обложка + {len(items)} кадров), A4, чёрный фон."]
+    for i, item in enumerate(items, 1):
+        prompt_en = str(item.get("prompt_en") or item.get("prompt") or "—")
+        prompt_ru = str(item.get("prompt_ru") or "—")
+        lines.append(
+            f"{i}. EN: {prompt_en} | RU: {prompt_ru} | "
+            f"MODELS: {_models_text(item)} | GEN: {_generation_text(item)}")
+    lines.append(system_info.hardware_line(hw))
+    return "\n".join(lines)
+
+
+def publish_daily_pdf(task_id: int, items: list[dict[str, Any]], title: str = "DAILY",
+                      page_size: str = "A4", dpi: int = 144, publish: bool = True,
+                      bot_login: str | None = None,
+                      progress: Callable[[dict[str, Any]], None] | None = None
+                      ) -> dict[str, Any]:
+    """Build a daily PDF (contact sheet + one frame per page + metadata) and publish it."""
+    def stage(text: str) -> None:
+        if progress:
+            progress({"type": "stage", "text": text})
+
+    task = db.get_task(int(task_id))
+    if not task:
+        raise ValueError(f"task not found: {task_id}")
+    cfg = load_config()
+    base = cfg["synx"]["base_url"]
+    client = SynxClient(base, cfg["synx"]["login"], cfg["synx"]["password"])
+    source = dict(task.get("source_json") or {})
+    entity_id = task.get("entity_id") or source.get("entity_id")
+    project_alias = source.get("project_alias") or task.get("project_id")
+    entity_name = source.get("entity_name") or task.get("shot")
+    sequence = source.get("sequence") or ""
+    entity_kind = source.get("entity_kind") or "shot"
+    task_type = task.get("task_type") or "Art"
+    task_name = task.get("task_name") or "daily"
+    if not entity_id or not project_alias or not entity_name:
+        raise ValueError("в задаче не хватает project/entity для публикации")
+    bot_login = bot_login or task.get("bot")
+    bots = [b for b in load_bots() if b.get("enabled", True) and b.get("login") and b.get("password")]
+    bot = next((b for b in bots if b.get("login") == bot_login), None)
+    if not bot:
+        bot, user = _pick_bot(client, task.get("synx_task_id") or "", bot_login)
+    else:
+        try:
+            user = next((u for u in client.assignment_users(task["synx_task_id"])
+                         if u.get("short_name") == bot.get("login")), {})
+        except Exception:
+            user = {}
+    bot_name = bot.get("login")
+    versions = client.versions(entity_id)
+    next_ver = max([int(v.get("version_number") or 0) for v in versions] + [0]) + 1
+    work = task_work_dir(cfg, project_alias, entity_name, sequence, task_type,
+                         bot_name, task_name, next_ver, entity_kind=entity_kind)
+    render = render_dir(cfg, project_alias, entity_name, sequence, next_ver,
+                        entity_kind=entity_kind)
+    work.mkdir(parents=True, exist_ok=True)
+    render.mkdir(parents=True, exist_ok=True)
+    old_work = Path(task.get("work_dir") or "")
+    if (old_work / "workflows").is_dir():
+        shutil.copytree(old_work / "workflows", work / "workflows", dirs_exist_ok=True)
+    if (old_work / "source_reference.png").is_file():
+        shutil.copy2(old_work / "source_reference.png", work / "source_reference.png")
+
+    stage("Собираю обложку и страницы дейли...")
+    daily_items = []
+    for i, item in enumerate(items, 1):
+        src = Path(str(item.get("path") or ""))
+        if not src.is_file():
+            continue
+        dst = work / f"frame_{i:02d}.png"
+        shutil.copy2(src, dst)
+        shutil.copy2(dst, render / dst.name)
+        it = dict(item)
+        it["path"] = str(dst)
+        it.setdefault("title", f"frame {i}")
+        daily_items.append(it)
+    if not daily_items:
+        raise ValueError("нет кадров для дейли")
+    hw = daily_items[0].get("hardware") or system_info.hardware_info()
+    pdf = daily_pdf.make_daily_pdf(daily_items, work / f"{_safe(task_name)}_daily.pdf",
+                                   title=title, page_size=page_size, dpi=dpi, hardware=hw)
+    check = verify_pdf(pdf, expected_pages=len(daily_items) + 1)
+    if not check.get("ok"):
+        raise ValueError("daily PDF не прошёл проверку: " + "; ".join(check.get("errors") or []))
+    shutil.copy2(pdf, render / pdf.name)
+
+    meta = {
+        "source": source,
+        "task": {"synx_task_id": task.get("synx_task_id"), "name": task_name,
+                 "type": task_type, "bot": bot_name,
+                 "bot_skills": (user or {}).get("skills") or ""},
+        "daily": True,
+        "pages": check.get("pages"),
+        "page_size": page_size.upper(),
+        "pdf_info": check,
+        "images": [{"file": Path(it["path"]).name, "title": it.get("title"),
+                    "prompt_en": it.get("prompt_en"), "prompt_ru": it.get("prompt_ru"),
+                    "elapsed_sec": it.get("elapsed_sec"),
+                    "elapsed_note": it.get("elapsed_note"),
+                    "models": it.get("models_used") or it.get("models"),
+                    "loras": it.get("loras") or [],
+                    "hardware": it.get("hardware")} for it in daily_items],
+        "hardware": hw,
+    }
+    (work / "generation_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2),
+                                               encoding="utf-8")
+    (work / "README.md").write_text(
+        f"# {task_name} — daily PDF\n\n"
+        f"- Шот: {project_alias}/{entity_name}\n"
+        f"- PDF: {pdf.name} — {check.get('pages')} страниц, {page_size.upper()}, "
+        f"{check.get('page_width')}x{check.get('page_height')} pts, проверен\n"
+        f"- Обложка: все кадры мелко; далее по одному кадру на страницу.\n"
+        f"- Фон страниц: чёрный; кадры по ширине листа; подписи серым.\n"
+        f"- Render: {render}\n",
+        encoding="utf-8")
+
+    if not publish:
+        return {"ok": True, "dry_run": True, "task_id": task_id, "pdf": str(pdf),
+                "pdf_info": check, "pages": check.get("pages"), "page_size": page_size.upper(),
+                "work_dir": str(work), "render_dir": str(render),
+                "images": [str(it["path"]) for it in daily_items]}
+
+    comment = _daily_comment(daily_items, hw, check.get("pages") or len(daily_items) + 1)
+    stage("Публикую daily PDF от имени бота...")
+    bc = bot_client(base, bot)
+    v = bc.publish_version(
+        entity_id, pdf, task.get("synx_task_id") or "",
+        comment=comment, minutes=10, note="Synx AI Robot daily PDF")
+    version_code = v.get("version_code")
+    media = v.get("media") or {}
+    media_kind = media.get("kind")
+    warning = None
+    if media_kind != "pdf":
+        warning = ("synx не распознал PDF как media (media.kind=%r). Версия доступна "
+                   "файлом, но плеер может показать пустоту — нужен preview или "
+                   "PDF-friendly тип задачи/asset." % (media_kind,))
+    url = version_url(base, project_alias, entity_kind, entity_name, version_code,
+                      task_type, task_name) if version_code else None
+    try:
+        bc.task_comment(task["synx_task_id"], f"Daily PDF {version_code}: {url or pdf}"
+                        + (f"\n{warning}" if warning else ""))
+    except Exception:
+        pass
+    plan = dict(task.get("plan_json") or {})
+    plan.update({"daily": True, "pdf": str(pdf), "pdf_info": check,
+                 "version_code": version_code, "media_kind": media_kind})
+    source.update({"target_version": next_ver, "pdf_info": check})
+    db.update_task(task_id, result_file=str(pdf), work_dir=str(work), render_dir=str(render),
+                   version_id=v.get("id"), version_code=version_code, synx_url=url,
+                   status="done", stage="published", plan_json=json.dumps(plan, ensure_ascii=False),
+                   source_json=json.dumps(source, ensure_ascii=False),
+                   finished_at=db.now(), error=None)
+    db.add_event(task_id, "daily_pdf", f"daily PDF {version_code}: {url or pdf}")
+    return {"ok": True, "dry_run": False, "task_id": task_id,
+            "synx_task_id": task.get("synx_task_id"), "bot": bot_name,
+            "bot_skills": (user or {}).get("skills") or "",
+            "version_code": version_code, "version_id": v.get("id"), "url": url,
+            "pdf": str(pdf), "pdf_info": check, "pages": check.get("pages"),
+            "page_size": page_size.upper(), "work_dir": str(work),
+            "render_dir": str(render), "media": media, "media_kind": media_kind,
+            "warning": warning, "comment": comment,
+            "images": [str(it["path"]) for it in daily_items]}

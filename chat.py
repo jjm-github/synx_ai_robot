@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import subprocess
 import time
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ import db
 import fs_tools
 import publish_flow
 import synx_tools
+import system_info
 from ai import AIClient, AIError, _data_url
 from config import ROOT, load_config
 from workflows import flux3_i2v, flux3_t2i
@@ -104,6 +106,30 @@ PDF на стандартных страницах, проверит его и �
 Не повторяй один и тот же вызов инструмента с теми же аргументами. Если результата
 достаточно — переходи к генерации или отвечай текстом. Для списков версий
 используй shot/version фильтры и limit не больше 50.
+
+## Daily PDF
+
+Если просят «дэйли», контактный лист, PDF с кадрами и подписями — вызывай
+`publish_daily_pdf` ОДИН раз. Он делает:
+
+- стр. 1 — все кадры мелко (контактный лист);
+- далее по одному кадру на страницу, чёрный фон, кадр по ширине листа
+  (боковые края совпадают с границами);
+- под кадром серым текстом (белый ~50%): Prompt EN/RU, модели и LoRA,
+  время генерации, PC/GPU/VRAM/CPU/RAM/SWAP, стоимость API, длина видео,
+  разрешение;
+- те же данные — в комментарий публикуемой версии.
+
+Не ходи по кругу через fs_list/synx_versions: один вызов publish_daily_pdf.
+
+## ffmpeg и MCP
+
+`ffmpeg`/`ffprobe` установлены и являются базовыми инструментами: используй
+инструмент `ffmpeg` напрямую для видео (нарезка, склейка, слайдшоу, кадры,
+проверка ffprobe). В программе есть управление MCP-конфигами (поиск/установка/
+список), но вызов MCP-инструментов в рантайме пока не реализован. Для PDF и
+ffmpeg проще и надёжнее прямые вызовы встроенных инструментов; MCP для этого
+не обязателен.
 
 ## Сводка по проекту
 
@@ -275,6 +301,43 @@ REPAIR_PDF_TOOL = {
     },
 }
 
+DAILY_PDF_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "publish_daily_pdf",
+        "description": ("Build and publish a DAILY PDF from a task's frames. Page 1 is a contact "
+                        "sheet with all frames small; the remaining pages have one frame per page on "
+                        "a black background, frame side edges aligned to the page borders, and gray "
+                        "text below: English and Russian prompt, models/LoRA, generation time, PC/GPU/"
+                        "VRAM/CPU/RAM/SWAP, API cost, video length and resolution. The same metadata is "
+                        "written into the version comment. Use ONE call for daily/contact-sheet/PDF "
+                        "requests; do not loop over fs_list/synx_versions."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "integer", "description": "Local task id with frame_*.png in its work folder"},
+                "title": {"type": "string", "default": "DAILY"},
+                "page_size": {"type": "string", "enum": ["A4", "A3"], "default": "A4"},
+                "publish": {"type": "boolean", "default": True},
+                "bot": {"type": "string"},
+                "prompts": {"type": "array", "items": {"type": "string"},
+                            "description": "English prompts per frame, in frame order"},
+                "prompts_ru": {"type": "array", "items": {"type": "string"},
+                               "description": "Russian prompts per frame, in frame order"},
+                "titles": {"type": "array", "items": {"type": "string"}},
+                "elapsed_sec": {"type": "number", "description": "Generation time per frame"},
+                "elapsed_note": {"type": "string", "description": "e.g. estimate or exact"},
+                "models": {"type": "object", "description": "unet/clip/vae used"},
+                "loras": {"type": "array", "items": {"type": "string"}},
+                "api_cost": {"type": "number"},
+                "video_seconds": {"type": "number"},
+                "resolution": {"type": "string"},
+            },
+            "required": ["task_id"],
+        },
+    },
+}
+
 SYNX_TOOLS = [
     {
         "type": "function",
@@ -426,7 +489,26 @@ FS_TOOLS = [
     }},
 ]
 
-TOOLS = [IMAGE_TOOL, VERSION_GEN_TOOL, PDF_TOOL, VERIFY_PDF_TOOL, REPAIR_PDF_TOOL, PUBLISH_TOOL] + SYNX_TOOLS + FS_TOOLS
+FFMPEG_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "ffmpeg",
+        "description": ("Run ffmpeg or ffprobe directly. Use for video probing, cutting, joining, "
+                        "extracting frames, slideshows and checks. Pass args as an array without the "
+                        "binary name. Example ffprobe: args=['-v','error','-show_streams','-of','json','file.mp4']."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "binary": {"type": "string", "enum": ["ffmpeg", "ffprobe"], "default": "ffmpeg"},
+                "args": {"type": "array", "items": {"type": "string"}},
+                "timeout_sec": {"type": "integer", "default": 600},
+            },
+            "required": ["args"],
+        },
+    },
+}
+
+TOOLS = [IMAGE_TOOL, VERSION_GEN_TOOL, PDF_TOOL, VERIFY_PDF_TOOL, REPAIR_PDF_TOOL, DAILY_PDF_TOOL, PUBLISH_TOOL, FFMPEG_TOOL] + SYNX_TOOLS + FS_TOOLS
 GEN_RE = re.compile(
     r"(нарисуй|сгенер|сгенерируй|сделай\s+(картин|изображ|кадр|арт)|"
     r"draw|generate\s+(an?\s+)?image|make\s+(an?\s+)?image|create\s+(an?\s+)?image)",
@@ -579,6 +661,8 @@ def _compose_restyle_prompt(prompt: str, style: str | None, has_reference: bool 
 def generate_image(prompt: str, negative: str = "", images: list[dict[str, Any]] | None = None,
                    progress=None, options: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     options = options or {}
+    started_ts = time.time()
+    started_at = datetime.now().isoformat(timespec="seconds")
     wconf = options.get("workflow_config") or {}
 
     def opt(key: str, default=None):
@@ -639,6 +723,20 @@ def generate_image(prompt: str, negative: str = "", images: list[dict[str, Any]]
         wf = flux3_t2i(prompt, negative, width, height, seed, cfg,
                        steps=steps, cfg_value=cfg_value, models=models)
     files = _submit(wf, cfg, IMAGES, progress=progress)
+    elapsed = round(time.time() - started_ts, 1)
+    hw = system_info.hardware_info()
+    cm = cfg.get("comfy", {}).get("models", {})
+    used_models = {
+        "unet": cm.get("unet_flux3") if workflow == "flux3_i2v" or workflow == "flux3_t2i" else cm.get("unet_wan22"),
+        "clip": cm.get("clip_flux3") if workflow.startswith("flux3") else cm.get("clip_wan"),
+        "vae": cm.get("vae_flux3") if workflow.startswith("flux3") else cm.get("vae_wan"),
+    }
+    loras = []
+    for node in wf.values() if isinstance(wf, dict) else []:
+        if isinstance(node, dict) and "lora" in str(node.get("class_type") or "").lower():
+            lora = (node.get("inputs") or {}).get("lora_name")
+            if lora and lora not in loras:
+                loras.append(lora)
     result = []
     for p in files:
         dst = IMAGES / f"{uuid.uuid4().hex[:12]}.png"
@@ -667,7 +765,11 @@ def generate_image(prompt: str, negative: str = "", images: list[dict[str, Any]]
                                     "denoise": denoise, "megapixels": megapixels,
                                     "preserve_aspect": bool(refs and preserve_aspect),
                                     "style": style, "models": models},
-                "workflow_json": wf}
+                "workflow_json": wf, "elapsed_sec": elapsed,
+                "started_at": started_at, "finished_at": datetime.now().isoformat(timespec="seconds"),
+                "hardware": hw, "models_used": used_models, "loras": loras,
+                "api_cost": 0, "generation_kind": "local_comfy", "video_seconds": None,
+                "resolution": f"{out_w}x{out_h}"}
         result.append(item)
         if progress:
             progress({"type": "image", "text": "Изображение готово", "image": item})
@@ -994,6 +1096,53 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
             publish=bool(args.get("publish", True)),
             bot_login=args.get("bot"), progress=progress)
         return result, [], None
+    if name == "publish_daily_pdf":
+        task_id = int(args.get("task_id") or 0)
+        if not task_id:
+            rows = db.list_tasks(limit=50)
+            for t in rows:
+                wd = Path(str(t.get("work_dir") or ""))
+                if wd.is_dir() and list(wd.glob("frame_*.png")):
+                    task_id = int(t["id"]); break
+        task = db.get_task(task_id)
+        if not task:
+            return {"error": f"task not found: {task_id}"}, [], None
+        work = Path(str(task.get("work_dir") or ""))
+        images = sorted(work.glob("frame_*.png"))
+        if not images:
+            images = sorted(Path(str(task.get("render_dir") or "")).glob("frame_*.png"))
+        if not images:
+            return {"error": "no frame_*.png in task work folder"}, [], None
+        prompts = args.get("prompts") or []
+        prompts_ru = args.get("prompts_ru") or []
+        titles = args.get("titles") or []
+        plan = task.get("plan_json") or {}
+        wconf = (plan.get("workflow_config") or {}) if isinstance(plan, dict) else {}
+        models = args.get("models") or wconf.get("models") or {}
+        loras = args.get("loras") or []
+        hw = system_info.hardware_info()
+        items = []
+        for i, p in enumerate(images):
+            items.append({
+                "path": str(p),
+                "title": titles[i] if i < len(titles) else p.stem,
+                "prompt_en": prompts[i] if i < len(prompts) else (plan.get("prompt") or ""),
+                "prompt_ru": prompts_ru[i] if i < len(prompts_ru) else "",
+                "models_used": models, "loras": loras,
+                "elapsed_sec": args.get("elapsed_sec"),
+                "elapsed_note": args.get("elapsed_note") or "",
+                "generation_kind": args.get("generation_kind") or "local_comfy",
+                "api_cost": args.get("api_cost", 0),
+                "video_seconds": args.get("video_seconds"),
+                "resolution": args.get("resolution") or "",
+                "hardware": hw,
+            })
+        result = publish_flow.publish_daily_pdf(
+            task_id, items, title=args.get("title") or "DAILY",
+            page_size=args.get("page_size") or "A4",
+            publish=bool(args.get("publish", True)), bot_login=args.get("bot"),
+            progress=progress)
+        return result, [], None
     if name == "publish_images_as_version":
         explicit = None
         if args.get("image_source") == "paths":
@@ -1046,6 +1195,19 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
                                    bool(args.get("base64_data"))), [], None
     if name == "fs_delete":
         return fs_tools.delete_path(args.get("path") or ""), [], None
+    if name == "ffmpeg":
+        binary = str(args.get("binary") or "ffmpeg").lower()
+        if binary not in ("ffmpeg", "ffprobe"):
+            return {"error": "binary must be ffmpeg or ffprobe"}, [], None
+        argv = [binary] + [str(x) for x in (args.get("args") or [])]
+        try:
+            cp = subprocess.run(argv, capture_output=True, text=True,
+                                timeout=int(args.get("timeout_sec") or 600))
+            return {"ok": cp.returncode == 0, "returncode": cp.returncode,
+                    "stdout": (cp.stdout or "")[-12000:],
+                    "stderr": (cp.stderr or "")[-12000:]}, [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
     return {"error": "unknown tool " + name}, [], None
 
 
