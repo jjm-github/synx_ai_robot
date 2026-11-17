@@ -494,3 +494,5 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .mcp-result { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: flex; gap: 10px; justify-content: space-between; align-items: center; margin-top: 6px; background: var(--panel); }
 .mcp-result small { color: var(--ink-soft); }
 .mcp-search { display: flex; gap: 8px; margin-bottom: 8px; }
+
+.local-file-link { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }

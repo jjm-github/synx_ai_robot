@@ -99,6 +99,13 @@
       wrap.innerHTML = '<div class="msg-avatar">' + (isUser ? "Я" : "AI") + '</div><div class="msg-bubble">' + textHtml + imgHtml + progressHtml + playlist + usage + "</div>";
       box.appendChild(wrap);
     });
+    box.querySelectorAll(".msg-text code").forEach(function (c) {
+      var t = (c.textContent || "").trim();
+      if (/^(\/|~\/).+\.(pdf|png|jpe?g|webp|gif|mp4|mov|webm|mkv|json|md|txt)$/i.test(t)) {
+        c.classList.add("local-file-link");
+        c.title = "Открыть файл";
+      }
+    });
     box.scrollTop = box.scrollHeight;
   }
   async function loadChatSessions(preferred) {
@@ -947,6 +954,50 @@
       window.open(url, "_blank");
     }
   }
+  function synxBase() {
+    return (state.config && state.config.synx && state.config.synx.base_url)
+      ? String(state.config.synx.base_url).replace(/\/$/, "") : "https://synks.ru";
+  }
+  function openPath(path) {
+    if (!path) return;
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.open_path) {
+      window.pywebview.api.open_path(path).then(function (r) {
+        if (r && !r.ok && !r.cancelled) toast(r.error || "Не удалось открыть файл", true);
+      }, function () { toast("Не удалось открыть файл", true); });
+    } else {
+      window.open("file://" + path, "_blank");
+    }
+  }
+  document.addEventListener("click", function (e) {
+    if (e.defaultPrevented) return;
+    var a = e.target.closest("a[href]");
+    if (a) {
+      var href = a.getAttribute("href") || "";
+      if (!href || href.charAt(0) === "#" || href.indexOf("javascript:") === 0) return;
+      if (href.indexOf("http://") === 0 || href.indexOf("https://") === 0 || href.indexOf("mailto:") === 0) {
+        e.preventDefault(); openExternal(href); return;
+      }
+      if (href.indexOf("/") === 0) {
+        e.preventDefault();
+        var local = href.indexOf("/api/") === 0 || href.indexOf("/static/") === 0;
+        openExternal((local ? window.location.origin : synxBase()) + href);
+        return;
+      }
+      if (href.indexOf("file://") === 0) {
+        e.preventDefault(); openPath(decodeURIComponent(href.slice(7))); return;
+      }
+      if (href.indexOf("/home/") === 0 || href.indexOf("/mnt/") === 0 || href.indexOf("~/") === 0) {
+        e.preventDefault(); openPath(href); return;
+      }
+    }
+    var code = e.target.closest("code, .mono");
+    if (code) {
+      var text = (code.textContent || "").trim();
+      if (/^(\/|~\/).+\.(pdf|png|jpe?g|webp|gif|mp4|mov|webm|mkv|json|md|txt)$/i.test(text)) {
+        e.preventDefault(); openPath(text);
+      }
+    }
+  }, false);
 
   async function openFolder(id) {
     try { var d = await api("/api/tasks/" + id + "/open-folder", { method: "POST" }); toast("Открыто: " + d.path); }

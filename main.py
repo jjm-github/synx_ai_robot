@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import os
 import platform
 import socket
+import subprocess
 import threading
 import time
 import urllib.request
+from pathlib import Path
 
 import uvicorn
 
@@ -65,6 +68,21 @@ class DesktopApi:
             import webbrowser
             webbrowser.open(url)
             return {"ok": True}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def open_path(self, path: str):
+        try:
+            target = Path(path).expanduser()
+            if not target.exists():
+                return {"ok": False, "error": "file not found"}
+            if platform.system() == "Windows":
+                os.startfile(str(target))  # type: ignore[attr-defined]
+            elif platform.system() == "Darwin":
+                subprocess.Popen(["open", str(target)])
+            else:
+                subprocess.Popen(["xdg-open", str(target)])
+            return {"ok": True, "path": str(target)}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
