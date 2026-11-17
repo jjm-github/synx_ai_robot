@@ -29,6 +29,12 @@
   `{{PROMPT}}`, `{{NEGATIVE}}`, `{{SEED}}`, `{{IMAGE}}`, `{{WIDTH}}`,
   `{{HEIGHT}}`, `{{FRAMES}}`, `{{SHOT}}`. Не выдумывай несуществующие ноды;
   если не уверен — верни null и объясни в `workflow_notes`.
+- Для тонкой настройки под задачу верни `workflow_config`: `profile`
+  (`flux3_i2v`, `flux3_t2i`, `wan22_i2v`, `wan22_t2v`), `steps`, `cfg`,
+  `denoise`, `megapixels`, `preserve_aspect`, `style` и `models`
+  (`unet`, `clip`, `vae`). Указывай только то, что нужно изменить.
+- Если сообщение содержит `@p.robot`, это приоритетное указание: `needs_task=true`,
+  сформулируй конкретное руководство к действию.
 
 Формат ответа — только JSON:
 
@@ -41,6 +47,7 @@
   "prompt": "English generation prompt",
   "negative": "English negative prompt",
   "workflow": null,
+  "workflow_config": null,
   "workflow_notes": "какой воркфлоу нужен",
   "references": [{"file_id": "...", "reason": "..."}],
   "source_version": "v001",

@@ -138,7 +138,11 @@ class AIClient:
         prompt = (
             "Проанализируй публикацию synx и верни только JSON по заданной схеме. "
             "Если задача не нужна — needs_task=false. Контекст:\n" +
-            json.dumps(context, ensure_ascii=False, indent=2)
+            json.dumps(context, ensure_ascii=False, indent=2) +
+            "\n\nЕсли нужен ComfyUI, дополнительно верни workflow_config: "
+            "profile (flux3_i2v, flux3_t2i, wan22_i2v, wan22_t2v), steps, cfg, denoise, "
+            "megapixels, preserve_aspect, style и models={unet, clip, vae} — только те "
+            "параметры, которые нужно изменить под задачу."
         )
         if pub.get("is_mention"):
             prompt += (

@@ -33,12 +33,14 @@ CHAT_SYSTEM = """Ты — ассистент Synx AI Robot. Отвечай по-
 - отвечать на вопросы о производстве, synx, версиях, задачах, проектах, ComfyUI и промптах;
 - анализировать прикреплённые пользователем изображения;
 - ходить в synx по API с данными из настроек приложения;
-- генерировать изображения в локальном ComfyUI;
+- находить конкретную версию по проекту, шоту и коду версии;
+- генерировать изображения в локальном ComfyUI, в том числе из кадра версии;
 - собирать плейлист Synx из опубликованных версий за период.
 
 Инструменты synx:
 - synx_projects — список проектов;
-- synx_versions — версии проекта за период (project, date_from, date_to, limit);
+- synx_find_version — найти одну версию по project + shot + version (возвращает компактные метаданные);
+- synx_versions — версии проекта за период, можно фильтровать по shot и version;
 - synx_tasks — задачи проекта;
 - synx_make_playlist — готовый текст плейлиста Synx за период.
 
@@ -48,25 +50,84 @@ CHAT_SYSTEM = """Ты — ассистент Synx AI Robot. Отвечай по-
 не повторяй её. Если просит плейлист — вызови
 synx_make_playlist и укажи project и даты. Сегодняшняя дата известна из контекста.
 
-Если пользователь просит нарисовать/сгенерировать/сделать изображение или кадр,
-вызови generate_image. В prompt передай подробный английский промпт. Если в
-сообщении есть прикреплённые референсы — опиши, что из них взять.
+## Генерация из конкретной версии synx
 
-Для вопросов, не требующих инструментов, просто ответь текстом.
+Если пользователь просит найти версию (project, shot, vXXX) и сгенерировать по ней
+картинку — НЕ вызывай synx_versions, synx_tasks и fs_list. Сразу вызови
+generate_from_synx_version ОДИН раз и передай project, shot, version, prompt/style.
+Этот инструмент сам скачает версию, возьмёт кадр (для видео — средний), сохранит
+пропорции исходника и соберёт FLUX.3 workflow. Если проект указан неверно, он сам
+найдёт шот в другом проекте и вернёт project_corrected=true.
+
+Для обычной генерации по тексту или по прикреплённому изображению вызывай
+generate_image. В prompt передавай подробный английский промпт. Если есть
+референс — передай его путь в reference_paths и preserve_aspect=true.
+
+Не повторяй один и тот же вызов инструмента с теми же аргументами. Если результата
+достаточно — переходи к генерации или отвечай текстом. Для списков версий
+используй shot/version фильтры и limit не больше 50.
 """
 
 IMAGE_TOOL = {
     "type": "function",
     "function": {
         "name": "generate_image",
-        "description": "Generate an image in local ComfyUI from a text prompt and optional user reference images.",
+        "description": ("Generate an image in local ComfyUI. Use reference_paths for local images "
+                        "and preserve_aspect=true to keep the reference proportions. For a specific "
+                        "synx version prefer generate_from_synx_version."),
         "parameters": {
             "type": "object",
             "properties": {
                 "prompt": {"type": "string", "description": "Detailed English image prompt"},
                 "negative": {"type": "string", "description": "English negative prompt"},
+                "reference_paths": {"type": "array", "items": {"type": "string"},
+                                    "description": "Local image paths to use as references"},
+                "style": {"type": "string", "description": "Style preset, e.g. cubism, watercolor, ink"},
+                "workflow": {"type": "string", "enum": ["auto", "flux3_i2v", "flux3_t2i"],
+                             "description": "ComfyUI workflow profile"},
+                "preserve_aspect": {"type": "boolean", "default": True},
+                "width": {"type": "integer"},
+                "height": {"type": "integer"},
+                "steps": {"type": "integer"},
+                "cfg": {"type": "number"},
+                "denoise": {"type": "number"},
+                "frame": {"type": "string", "enum": ["first", "middle", "last"]},
             },
             "required": ["prompt"],
+        },
+    },
+}
+
+VERSION_GEN_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "generate_from_synx_version",
+        "description": ("Find an exact synx version by project/shot/version, download it, extract a frame "
+                        "(middle frame for video), and generate a new image from it in one call. "
+                        "Use this for requests like 'find p002_0130 v004 and generate a cubist image'. "
+                        "Do NOT call synx_versions, synx_tasks or fs_list for this."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "description": "Project alias/name/id (may be corrected automatically)"},
+                "shot": {"type": "string", "description": "Entity/shot name, e.g. p002_0130"},
+                "version": {"type": "string", "description": "Version code, e.g. v004 or 4"},
+                "prompt": {"type": "string", "description": "English prompt for the new image"},
+                "style": {"type": "string", "description": "Style, e.g. cubism, watercolor, ink"},
+                "negative": {"type": "string"},
+                "frame": {"type": "string", "enum": ["first", "middle", "last"], "default": "middle"},
+                "preserve_aspect": {"type": "boolean", "default": True},
+                "workflow": {"type": "string", "enum": ["flux3_i2v", "flux3_t2i"], "default": "flux3_i2v"},
+                "steps": {"type": "integer"},
+                "cfg": {"type": "number"},
+                "denoise": {"type": "number"},
+                "width": {"type": "integer"},
+                "height": {"type": "integer"},
+                "unet": {"type": "string"},
+                "clip": {"type": "string"},
+                "vae": {"type": "string"},
+            },
+            "required": ["project", "shot", "prompt"],
         },
     },
 }
@@ -83,16 +144,36 @@ SYNX_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "synx_find_version",
+            "description": ("Find one exact version by project, shot and version code. Returns compact "
+                            "metadata: media kind, dimensions, frames, file id. Searches other projects "
+                            "if the shot is not in the requested project."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string"},
+                    "shot": {"type": "string"},
+                    "version": {"type": "string", "description": "v004 or 4"},
+                },
+                "required": ["project", "shot"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "synx_versions",
-            "description": "List published versions of a synx project for a date period.",
+            "description": "List published versions of a synx project for a date period, optionally filtered by shot and version.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "project": {"type": "string", "description": "Project alias, name or id"},
                     "date_from": {"type": "string", "description": "YYYY-MM-DD inclusive"},
                     "date_to": {"type": "string", "description": "YYYY-MM-DD inclusive"},
-                    "limit": {"type": "integer", "default": 300},
+                    "limit": {"type": "integer", "default": 50},
                     "playable_only": {"type": "boolean", "default": False},
+                    "shot": {"type": "string", "description": "Optional exact shot/entity name filter"},
+                    "version": {"type": "string", "description": "Optional version code filter, e.g. v004"},
                 },
                 "required": ["project"],
             },
@@ -166,7 +247,7 @@ FS_TOOLS = [
     }},
 ]
 
-TOOLS = [IMAGE_TOOL] + SYNX_TOOLS + FS_TOOLS
+TOOLS = [IMAGE_TOOL, VERSION_GEN_TOOL] + SYNX_TOOLS + FS_TOOLS
 GEN_RE = re.compile(
     r"(нарисуй|сгенер|сгенерируй|сделай\s+(картин|изображ|кадр|арт)|"
     r"draw|generate\s+(an?\s+)?image|make\s+(an?\s+)?image|create\s+(an?\s+)?image)",
@@ -255,35 +336,305 @@ def _submit(workflow: dict[str, Any], cfg: dict[str, Any], out_dir: Path,
     return files
 
 
+STYLE_ALIASES = {
+    "кубизм": "cubism", "куби": "cubism", "cubism": "cubism", "cubist": "cubism",
+    "акварел": "watercolor", "watercolor": "watercolor", "watercolour": "watercolor",
+    "тушь": "ink", "ink": "ink", "график": "ink",
+    "импрессионизм": "impressionism", "impressionism": "impressionism",
+    "аниме": "anime", "anime": "anime", "киберпанк": "cyberpunk", "cyberpunk": "cyberpunk",
+    "масло": "oil painting", "oil": "oil painting", "реализм": "photorealism",
+    "photorealistic": "photorealism", "пиксель": "pixel art", "pixel": "pixel art",
+}
+STYLE_PROMPTS = {
+    "cubism": ("cubist painting, fragmented geometric planes, multiple simultaneous viewpoints, "
+               "bold angular contours, interlocking facets, visible painterly brushwork"),
+    "watercolor": "loose watercolor painting, translucent washes, paper texture, soft edges",
+    "ink": "black ink drawing, expressive pen and brush strokes, monochrome graphic style",
+    "impressionism": "impressionist painting, visible brush strokes, light and color atmosphere",
+    "anime": "anime key visual, clean line art, cel shading",
+    "cyberpunk": "cyberpunk concept art, neon lighting, high contrast",
+    "oil painting": "oil painting, visible brush strokes, rich texture",
+    "photorealism": "photorealistic rendering, natural light, fine detail",
+    "pixel art": "pixel art, limited palette, crisp pixels",
+}
+DEFAULT_NEG = ("different composition, changed framing, different camera angle, cropped subject, "
+               "distorted proportions, extra limbs, deformed anatomy, text, watermark, logo")
+
+
+def _apply_style(prompt: str, style: str | None) -> str:
+    text = (prompt or "").strip()
+    key = str(style or "").strip().lower()
+    if key:
+        key = STYLE_ALIASES.get(key, key)
+        if key.lower() not in text.lower():
+            text = (text + ", " if text else "") + STYLE_PROMPTS.get(key, f"{key} style")
+    return text
+
+
+def _reference_size(path: str, max_side: int = 1920, max_pixels: int = 1_600_000) -> tuple[int, int]:
+    try:
+        with Image.open(path) as im:
+            w, h = im.size
+    except Exception:
+        return 1024, 1024
+    if w <= 0 or h <= 0:
+        return 1024, 1024
+    scale = (float(max_pixels) / float(w * h)) ** 0.5
+    scale = min(scale, float(max_side) / float(max(w, h)))
+    tw = max(64, int(round(w * scale / 16.0)) * 16)
+    th = max(64, int(round(h * scale / 16.0)) * 16)
+    return tw, th
+
+
+def _compose_restyle_prompt(prompt: str, style: str | None, has_reference: bool = True) -> str:
+    text = _apply_style(prompt, style)
+    if has_reference:
+        low = text.lower()
+        if "preserve" not in low and "composition" not in low:
+            text += (", preserve the exact composition, framing, camera angle, subject placement, "
+                     "and original aspect ratio of the reference frame; do not crop or reframe")
+    return text
+
+
 def generate_image(prompt: str, negative: str = "", images: list[dict[str, Any]] | None = None,
-                   progress=None) -> list[dict[str, Any]]:
+                   progress=None, options: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    options = options or {}
+    wconf = options.get("workflow_config") or {}
+
+    def opt(key: str, default=None):
+        value = options.get(key)
+        return value if value is not None else wconf.get(key, default)
+
     if progress:
         progress({"type": "stage", "text": "Готовлю референсы..."})
     cfg = load_config()
     refs = _refs_for_generation(images or [])
+    for extra in options.get("reference_paths") or []:
+        extra = str(extra)
+        if Path(extra).is_file() and extra not in refs:
+            refs.append(extra)
+    style = opt("style") or ""
+    prompt = _apply_style(prompt, style)
+    preserve_aspect = opt("preserve_aspect", bool(refs))
+    width = opt("width")
+    height = opt("height")
+    if width and height:
+        width, height = int(width), int(height)
+    elif refs and preserve_aspect:
+        width, height = _reference_size(refs[0], int(opt("max_side") or 1920),
+                                        int(opt("max_pixels") or 1_600_000))
+    else:
+        width = height = 1024
+    if refs:
+        low = prompt.lower()
+        if "preserve" not in low and "composition" not in low:
+            prompt += (", preserve the exact composition, framing, camera angle, subject placement, "
+                       "and original aspect ratio of the reference frame; do not crop or reframe")
+    target_ratio = None
+    if refs and preserve_aspect:
+        try:
+            with Image.open(refs[0]) as im_ref:
+                target_ratio = im_ref.width / im_ref.height
+        except Exception:
+            target_ratio = None
+    negative = (negative or "").strip() or DEFAULT_NEG
+    seed = int(opt("seed") or 20261117)
     input_dir = Path(str(cfg["comfy"].get("input_dir") or "~/opt/ComfyUI/input")).expanduser()
     names = _stage_refs(refs, input_dir)
-    width = height = 1024
-    seed = 20261117
+    workflow = str(opt("workflow") or "auto").lower()
+    if workflow in ("", "auto"):
+        workflow = "flux3_i2v" if names else "flux3_t2i"
+    steps = int(opt("steps") or (8 if workflow == "flux3_i2v" else 24))
+    cfg_value = float(opt("cfg") if opt("cfg") is not None else (1.0 if workflow == "flux3_i2v" else 2.0))
+    denoise = float(opt("denoise") if opt("denoise") is not None else 1.0)
+    megapixels = float(opt("megapixels") or (width * height) / 1_000_000.0)
+    models = opt("models") or {}
     if progress:
-        progress({"type": "stage", "text": "Собираю workflow FLUX.3..."})
-    if names:
-        wf = flux3_i2v(prompt, negative, names, width, height, seed, cfg, steps=8)
+        progress({"type": "stage", "text": f"Собираю workflow {workflow}..."})
+    if workflow == "flux3_i2v" and names:
+        wf = flux3_i2v(prompt, negative, names, width, height, seed, cfg,
+                       steps=steps, cfg_value=cfg_value, denoise=denoise,
+                       megapixels=megapixels, models=models)
     else:
-        wf = flux3_t2i(prompt, negative, width, height, seed, cfg, steps=24)
+        wf = flux3_t2i(prompt, negative, width, height, seed, cfg,
+                       steps=steps, cfg_value=cfg_value, models=models)
     files = _submit(wf, cfg, IMAGES, progress=progress)
     result = []
     for p in files:
         dst = IMAGES / f"{uuid.uuid4().hex[:12]}.png"
+        out_w, out_h = width, height
         try:
-            Image.open(p).convert("RGB").save(dst)
+            im_out = Image.open(p).convert("RGB")
+            if target_ratio:
+                w, h = im_out.size
+                if w / h > target_ratio:
+                    nw = max(1, int(round(h * target_ratio)))
+                    left = max(0, (w - nw) // 2)
+                    im_out = im_out.crop((left, 0, left + nw, h))
+                else:
+                    nh = max(1, int(round(w / target_ratio)))
+                    top = max(0, (h - nh) // 2)
+                    im_out = im_out.crop((0, top, w, top + nh))
+            im_out.save(dst)
+            out_w, out_h = im_out.size
         except Exception:
             shutil.copy2(p, dst)
-        item = {"name": dst.name, "path": str(dst), "url": f"/api/chat/file/images/{dst.name}"}
+        item = {"name": dst.name, "path": str(dst), "url": f"/api/chat/file/images/{dst.name}",
+                "width": out_w, "height": out_h, "workflow": workflow}
         result.append(item)
         if progress:
             progress({"type": "image", "text": "Изображение готово", "image": item})
     return result
+
+
+def _detect_style(text: str) -> str:
+    low = (text or "").lower()
+    for key in sorted(STYLE_ALIASES, key=len, reverse=True):
+        if key in low:
+            return STYLE_ALIASES[key]
+    return ""
+
+
+def _version_request(text: str) -> dict[str, Any] | None:
+    """Recognise an explicit request: project + shot + version + generation intent."""
+    if not GEN_RE.search(text or ""):
+        return None
+    m_shot = re.search(r"\b([A-Za-z][A-Za-z0-9_]*_\d{3,5}(?:_v?\d{1,4})?)\b", text or "", re.I)
+    if not m_shot:
+        return None
+    shot = m_shot.group(1)
+    tail = (text or "")[m_shot.end():m_shot.end() + 80]
+    m_ver = re.search(r"\b(v\d{1,4})\b", tail, re.I)
+    version = m_ver.group(1) if m_ver else None
+    # p002_0130_v004 / p002_0130_004 -> split the trailing version
+    m_tail = re.match(r"^(.+?)_v?(\d{1,4})$", shot, re.I)
+    if m_tail and re.search(r"_\d{3,5}$", m_tail.group(1)):
+        shot = m_tail.group(1)
+        version = version or ("v" + m_tail.group(2).zfill(3))
+    m_proj = re.search(r"(?:проект[ае]?|project)\s+([A-Za-z0-9_.-]+)", text or "", re.I)
+    project = m_proj.group(1).strip(" ,.;") if m_proj else None
+    if not project:
+        projects = load_config().get("synx", {}).get("projects") or []
+        if projects:
+            project = projects[0]
+    if not project:
+        return None
+    low = (text or "").lower()
+    frame = "middle"
+    if "первый кадр" in low or "first frame" in low:
+        frame = "first"
+    elif "последний кадр" in low or "last frame" in low:
+        frame = "last"
+    return {
+        "project": project,
+        "shot": shot,
+        "version": version,
+        "style": _detect_style(text),
+        "frame": frame,
+        "preserve_aspect": any(k in low for k in (
+            "пропорц", "композиц", "кадр", "aspect", "composition", "frame", "reframe")),
+    }
+
+
+def _prompt_for_version(text: str, req: dict[str, Any], ref: dict[str, Any],
+                        ai: AIClient, progress=None) -> tuple[str, dict[str, int]]:
+    style = req.get("style") or ""
+    rules = ("Preserve the exact composition, framing, camera angle, subject placement and the "
+             "original aspect ratio of the reference frame. Do not crop or reframe. Keep the "
+             "underlying scene structure readable while applying the requested style.")
+    fallback = _compose_restyle_prompt(
+        "Restyle the provided reference frame" + (f" in {style} style" if style else ""),
+        style, True)
+    if not ai.ready:
+        return fallback, {"input": 0, "output": 0}
+    if progress:
+        progress({"type": "stage", "text": "Готовлю промпт по референсу..."})
+    instruction = (
+        "You write ONE English prompt for FLUX.3 image-to-image editing. Output only the prompt, "
+        "without quotes, JSON or explanations. " + rules + "\n"
+        f"User request (Russian): {text}\n"
+        f"Reference: project {req.get('project')}, shot {req.get('shot')}, "
+        f"version {req.get('version') or 'latest'}, {ref.get('width')}x{ref.get('height')}.\n"
+        + (f"Style: {style}.\n" if style else "")
+    )
+    content: list[dict[str, Any]] = [{"type": "text", "text": instruction}]
+    try:
+        content.append({"type": "image_url", "image_url": {"url": _data_url(Path(ref["path"]))}})
+    except Exception:
+        pass
+    try:
+        out, usage = ai.chat([
+            {"role": "system", "content": "You are a precise prompt engineer. Output only the prompt."},
+            {"role": "user", "content": content},
+        ])
+        prompt = (out or "").strip().strip("`").strip().strip('"').strip()
+        if not prompt:
+            return fallback, usage
+        if len(prompt) > 2200:
+            prompt = prompt[:2200]
+        low = prompt.lower()
+        if style and style.lower() not in low:
+            prompt += f", {style} style"
+        if "preserve" not in low and "composition" not in low:
+            prompt += ", preserve the exact composition, framing and aspect ratio"
+        return prompt, usage
+    except Exception:
+        return fallback, {"input": 0, "output": 0}
+
+
+def _generate_from_version(project: str, shot: str, version: str | None, prompt: str,
+                           style: str | None, negative: str, frame: str,
+                           options: dict[str, Any], images: list[dict[str, Any]] | None = None,
+                           progress=None, ref: dict[str, Any] | None = None
+                           ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    if ref is None:
+        if progress:
+            progress({"type": "stage", "text": "Ищу версию в synx..."})
+        ref = synx_tools.prepare_reference(project, shot, version, frame or "middle")
+    info = ref.get("version") or {}
+    if progress:
+        progress({"type": "stage",
+                  "text": f"Референс готов: {ref.get('width')}x{ref.get('height')} ({info.get('version')})"})
+    prompt = _compose_restyle_prompt(prompt, style, True)
+    opts = dict(options or {})
+    opts.setdefault("style", style or "")
+    opts.setdefault("preserve_aspect", True)
+    opts.setdefault("workflow", "flux3_i2v")
+    opts.setdefault("reference_paths", [ref["path"]])
+    models = {k: opts.get(k) for k in ("unet", "clip", "vae") if opts.get(k)}
+    if models:
+        opts["models"] = models
+    opts.setdefault("workflow_config", {
+        "profile": opts.get("workflow") or "flux3_i2v",
+        "steps": opts.get("steps") or 8,
+        "cfg": opts.get("cfg") if opts.get("cfg") is not None else 1.0,
+        "denoise": opts.get("denoise") if opts.get("denoise") is not None else 1.0,
+        "megapixels": round((int(ref.get("width") or 1) * int(ref.get("height") or 1)) / 1_000_000.0, 4),
+        "preserve_aspect": True,
+        "style": style or "",
+    })
+    refs = [{"path": ref["path"]}]
+    refs.extend(images or [])
+    generated = generate_image(prompt, negative or DEFAULT_NEG, refs, progress=progress, options=opts)
+    result = {
+        "ok": True,
+        "project": info.get("project"),
+        "requested_project": info.get("requested_project"),
+        "project_corrected": bool(info.get("project_corrected")),
+        "shot": info.get("entity"),
+        "version": info.get("version"),
+        "media_kind": info.get("media_kind"),
+        "width": ref.get("width"),
+        "height": ref.get("height"),
+        "aspect_ratio": ref.get("aspect_ratio"),
+        "frame": ref.get("frame"),
+        "reference_path": ref.get("path"),
+        "style": style or "",
+        "prompt": prompt,
+        "workflow_config": opts.get("workflow_config"),
+        "images": generated,
+    }
+    return result, generated
 
 
 def _image_content(images: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -315,16 +666,29 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
                   progress=None) -> tuple[Any, list[dict[str, Any]], str | None]:
     """Returns (tool_result, generated_images, playlist_text)."""
     if name == "generate_image":
-        prompt = (args.get("prompt") or "").strip()
+        prompt = (args.get("prompt") or "").strip() or "A detailed cinematic image"
         neg = args.get("negative") or ""
-        generated = generate_image(prompt, neg, images, progress=progress)
+        generated = generate_image(prompt, neg, images, progress=progress, options=args)
         return {"ok": True, "images": generated}, generated, None
+    if name == "generate_from_synx_version":
+        result, generated = _generate_from_version(
+            args.get("project") or "", args.get("shot") or "", args.get("version"),
+            args.get("prompt") or "", args.get("style") or "", args.get("negative") or "",
+            args.get("frame") or "middle", args, images=images, progress=progress)
+        return result, generated, None
     if name == "synx_projects":
         return synx_tools.projects(), [], None
+    if name == "synx_find_version":
+        try:
+            return synx_tools.find_version(args.get("project") or "", args.get("shot") or "",
+                                           args.get("version")), [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
     if name == "synx_versions":
         return synx_tools.versions(args.get("project") or "", args.get("date_from"),
-                                   args.get("date_to"), int(args.get("limit") or 300),
-                                   bool(args.get("playable_only"))), [], None
+                                   args.get("date_to"), int(args.get("limit") or 50),
+                                   bool(args.get("playable_only")),
+                                   shot=args.get("shot"), version=args.get("version")), [], None
     if name == "synx_tasks":
         return synx_tools.tasks(args.get("project") or "", args.get("status"),
                                 int(args.get("limit") or 300)), [], None
@@ -375,8 +739,50 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
     content = ""
     tool_used = False
     ai_error = False
+
+    # Explicit "find version X and generate from it" requests are handled
+    # deterministically: lookup + reference frame + FLUX.3 restyle in one pass.
+    version_req = _version_request(text or "")
+    if version_req and not PLAYLIST_RE.search(text or ""):
+        try:
+            emit({"type": "stage", "text": "Ищу версию в synx..."})
+            ref = synx_tools.prepare_reference(
+                version_req["project"], version_req["shot"],
+                version_req.get("version"), version_req.get("frame") or "middle")
+            prompt, pun = _prompt_for_version(text or "", version_req, ref, ai, progress=emit)
+            usage["input"] += int(pun.get("input") or 0)
+            usage["output"] += int(pun.get("output") or 0)
+            result, generated = _generate_from_version(
+                version_req["project"], version_req["shot"], version_req.get("version"),
+                prompt, version_req.get("style"), "", version_req.get("frame") or "middle",
+                {"workflow": "flux3_i2v", "steps": 8, "cfg": 1.0, "denoise": 1.0,
+                 "preserve_aspect": True, "style": version_req.get("style") or ""},
+                images=images, progress=emit, ref=ref)
+            info = result
+            requested = info.get("requested_project")
+            corrected = (f" В запросе был проект {requested}, версия нашлась в "
+                         f"{info.get('project')}." if info.get("project_corrected") else "")
+            kind = "видео, средний кадр" if info.get("media_kind") == "video" else "изображение"
+            wf = info.get("workflow_config") or {}
+            content = (
+                f"Готово. Нашёл {info.get('project')}/{info.get('shot')} {info.get('version')} "
+                f"({kind}, {info.get('width')}x{info.get('height')}).{corrected} "
+                f"Сгенерировал изображение" + (f" в стиле {info.get('style')}" if info.get("style") else "") +
+                " с сохранением композиции и пропорций исходника. "
+                f"Workflow: {wf.get('profile')}, steps={wf.get('steps')}, "
+                f"cfg={wf.get('cfg')}, denoise={wf.get('denoise')}."
+            )
+        except Exception as exc:
+            content = f"Не удалось найти версию или сгенерировать изображение: {exc}"
+        emit({"type": "stage", "text": "Готово"})
+        db.add_chat_message(session_id, "assistant", content, generated=generated,
+                            usage=usage, playlist_text=None, progress=stages)
+        return {"messages": db.list_chat_messages(session_id), "usage": usage,
+                "generated": generated, "playlist_text": None, "stages": stages}
+
+    seen_calls: set[str] = set()
     try:
-        for _ in range(5):
+        for _ in range(8):
             emit({"type": "stage", "text": "Думаю..."})
             msg, u = ai.chat_message(history, tools=TOOLS)
             usage["input"] += u.get("input", 0)
@@ -395,18 +801,27 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
                     args = json.loads(fn.get("arguments") or "{}")
                 except Exception:
                     args = {}
-                try:
-                    emit({"type": "stage", "text": f"Инструмент: {name}"})
-                    result, gen, pl = _execute_tool(name, args, images, progress=emit)
-                    generated.extend(gen)
-                    if pl:
-                        playlist_text = pl
-                except Exception as exc:
-                    result = {"error": str(exc)}
+                signature = name + json.dumps(args, ensure_ascii=False, sort_keys=True)
+                if signature in seen_calls:
+                    result = {"error": "duplicate_tool_call",
+                              "message": "Этот вызов уже выполнен. Используй предыдущий результат; "
+                                         "не повторяй его. Если данных достаточно — переходи к "
+                                         "generate_image / generate_from_synx_version или ответу."}
+                else:
+                    seen_calls.add(signature)
+                    try:
+                        emit({"type": "stage", "text": f"Инструмент: {name}"})
+                        result, gen, pl = _execute_tool(name, args, images, progress=emit)
+                        generated.extend(gen)
+                        if pl:
+                            playlist_text = pl
+                    except Exception as exc:
+                        result = {"error": str(exc)}
                 history.append({"role": "tool", "tool_call_id": call.get("id") or name,
                                 "content": json.dumps(result, ensure_ascii=False)[:12000]})
         else:
-            content = "Слишком много шагов инструментов. Уточни запрос."
+            content = ("Слишком много шагов. Уточни проект, шот и версию. "
+                       "Для генерации из версии используй один вызов generate_from_synx_version.")
     except AIError as exc:
         ai_error = True
         content = f"AI недоступен: {exc}"
