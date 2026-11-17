@@ -51,6 +51,7 @@ def init() -> None:
                 answered_by_version INTEGER DEFAULT 0,
                 answer_version_number INTEGER,
                 answer_version_code TEXT,
+                is_mention INTEGER DEFAULT 0,
                 analysis_tokens INTEGER DEFAULT 0,
                 created_db TEXT NOT NULL,
                 updated_db TEXT NOT NULL
@@ -90,6 +91,7 @@ def init() -> None:
                 error TEXT,
                 paused INTEGER DEFAULT 0,
                 skipped INTEGER DEFAULT 0,
+                priority INTEGER DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 started_at TEXT,
@@ -135,14 +137,16 @@ def init() -> None:
         )
         cols = {r["name"] for r in c.execute("PRAGMA table_info(tasks)").fetchall()}
         for col, typ in (("render_dir", "TEXT"), ("plan_md", "TEXT"), ("plan_md_path", "TEXT"),
-                         ("version_code", "TEXT"), ("synx_url", "TEXT")):
+                         ("version_code", "TEXT"), ("synx_url", "TEXT"),
+                         ("priority", "INTEGER DEFAULT 0")):
             if col not in cols:
                 c.execute(f"ALTER TABLE tasks ADD COLUMN {col} {typ}")
         pcols = {r["name"] for r in c.execute("PRAGMA table_info(publications)").fetchall()}
         for col, typ in (("analysis_md", "TEXT"), ("analysis_md_path", "TEXT"),
                          ("needs_action", "INTEGER"), ("publication_type", "TEXT"),
                          ("analysis_source", "TEXT"), ("answered_by_version", "INTEGER DEFAULT 0"),
-                         ("answer_version_number", "INTEGER"), ("answer_version_code", "TEXT")):
+                         ("answer_version_number", "INTEGER"), ("answer_version_code", "TEXT"),
+                         ("is_mention", "INTEGER DEFAULT 0")):
             if col not in pcols:
                 c.execute(f"ALTER TABLE publications ADD COLUMN {col} {typ}")
         ccols = {r["name"] for r in c.execute("PRAGMA table_info(chat_messages)").fetchall()}
@@ -185,8 +189,8 @@ def add_publication(pub: dict[str, Any]) -> int | None:
                     version_id, version_number, comment_id, author, body, created_at,
                     attachments_json, status, needs_action, publication_type, analysis_source,
                     answered_by_version, answer_version_number, answer_version_code,
-                    created_db, updated_db)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    is_mention, created_db, updated_db)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     pub.get("project_id"), pub.get("project_alias"), pub.get("entity_id"),
                     pub.get("shot"), pub.get("thread_kind"), pub.get("task_id"),
@@ -194,11 +198,14 @@ def add_publication(pub: dict[str, Any]) -> int | None:
                     pub.get("author"), pub.get("body"), pub.get("created_at"),
                     json.dumps(pub.get("attachments") or [], ensure_ascii=False),
                     pub.get("status", "new"),
-                    0 if pub.get("answered_by_version") else None,
-                    "version" if pub.get("answered_by_version") else None,
-                    "reply" if pub.get("answered_by_version") else None,
+                    0 if pub.get("answered_by_version") else (1 if pub.get("is_mention") else None),
+                    "version" if pub.get("answered_by_version") else (
+                        "continuation" if pub.get("is_mention") else None),
+                    "reply" if pub.get("answered_by_version") else (
+                        "mention" if pub.get("is_mention") else None),
                     int(pub.get("answered_by_version") or 0),
                     pub.get("answer_version_number"), pub.get("answer_version_code"),
+                    int(pub.get("is_mention") or 0),
                     now(), now(),
                 ),
             )
@@ -231,6 +238,30 @@ def sync_publication_answer(comment_id: str, answered: bool, version_number: int
                WHERE comment_id=? AND answered_by_version=1""",
             (now(), comment_id),
         )
+
+
+def sync_publication_mention(comment_id: str, is_mention: bool) -> None:
+    """Mark comments that address @p.robot. Mentions are actionable unless a
+    version has already answered them, or AI has already classified them."""
+    if not is_mention:
+        return
+    execute(
+        """UPDATE publications
+           SET is_mention=1,
+               needs_action=CASE WHEN answered_by_version=1 THEN 0
+                                 WHEN analysis_source='ai' THEN needs_action ELSE 1 END,
+               publication_type=CASE WHEN answered_by_version=1 THEN 'version'
+                                     WHEN analysis_source='ai' THEN publication_type
+                                     ELSE 'continuation' END,
+               analysis_source=CASE WHEN answered_by_version=1 THEN analysis_source
+                                    WHEN analysis_source='ai' THEN 'ai' ELSE 'mention' END,
+               updated_db=?
+           WHERE comment_id=?
+             AND (is_mention IS NOT 1
+                  OR (answered_by_version IS NOT 1 AND analysis_source IS NOT 'ai'
+                      AND needs_action IS NOT 1))""",
+        (now(), comment_id),
+    )
 
 
 def list_publications(status: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
@@ -283,8 +314,16 @@ def create_task(data: dict[str, Any]) -> int:
         "plan_json", "plan_md", "plan_md_path", "workflow_json", "source_json",
         "work_dir", "render_dir", "result_file",
         "version_id", "version_code", "synx_url", "error", "paused", "skipped",
+        "priority",
     ]
-    values = [data.get(k) for k in keys]
+    defaults = {"status": "queued", "stage": "queued", "progress": 0,
+                "paused": 0, "skipped": 0, "priority": 0}
+    values = []
+    for k in keys:
+        v = data.get(k)
+        if v is None and k in defaults:
+            v = defaults[k]
+        values.append(v)
     fields = ", ".join(keys + ["created_at", "updated_at"])
     marks = ", ".join(["?"] * (len(keys) + 2))
     return execute(f"INSERT INTO tasks ({fields}) VALUES ({marks})", (*values, ts, ts))
@@ -339,7 +378,7 @@ def next_task() -> dict[str, Any] | None:
     r = one(
         """SELECT * FROM tasks
            WHERE status='queued' AND paused=0 AND skipped=0
-           ORDER BY id ASC LIMIT 1"""
+           ORDER BY COALESCE(priority, 0) DESC, id ASC LIMIT 1"""
     )
     if not r:
         return None

@@ -172,18 +172,45 @@ def _scan_once(projects: list[str] | None = None) -> dict[str, Any]:
                 n += 1
                 new_ids.append(new_id)
             else:
+                db.sync_publication_mention(rec.get("comment_id"), bool(rec.get("is_mention")))
                 db.sync_publication_answer(
                     rec.get("comment_id"), bool(rec.get("answered_by_version")),
                     rec.get("answer_version_number"), rec.get("answer_version_code"),
                 )
+                row = db.one("SELECT id, analysis_source FROM publications WHERE comment_id=?",
+                             (rec.get("comment_id"),))
+                if (rec.get("is_mention") and row and row.get("analysis_source") != "ai"
+                        and int(row["id"]) not in new_ids):
+                    new_ids.append(int(row["id"]))
         inserted += n
         detail.append({"project": alias, "comments": len(recs), "new": n})
+    event_recs = client.scan_mention_events(limit=int(cfg["synx"].get("mention_events_limit", 1000)))
+    event_new = 0
+    for rec in event_recs:
+        new_id = db.add_publication(rec)
+        if new_id:
+            event_new += 1
+            new_ids.append(new_id)
+        else:
+            db.sync_publication_mention(rec.get("comment_id"), bool(rec.get("is_mention")))
+            db.sync_publication_answer(
+                rec.get("comment_id"), bool(rec.get("answered_by_version")),
+                rec.get("answer_version_number"), rec.get("answer_version_code"),
+            )
+            row = db.one("SELECT id, analysis_source FROM publications WHERE comment_id=?",
+                         (rec.get("comment_id"),))
+            if (rec.get("is_mention") and row and row.get("analysis_source") != "ai"
+                    and int(row["id"]) not in new_ids):
+                new_ids.append(int(row["id"]))
+    inserted += event_new
+    detail.append({"project": "@p.robot events", "comments": len(event_recs), "new": event_new})
     db.set_meta("last_scan", db.now())
     ready = AIClient(cfg).ready
     if new_ids and cfg["synx"].get("auto_analyze", True) and ready:
         threading.Thread(target=_auto_analyze, args=(new_ids,), daemon=True,
                          name="synx-autoclassify").start()
-    return {"ok": True, "comments": total, "new": inserted, "detail": detail,
+    return {"ok": True, "comments": total, "new": inserted, "events": len(event_recs),
+            "detail": detail,
             "auto_analyze": len(new_ids) if (cfg["synx"].get("auto_analyze", True) and ready) else 0}
 
 
@@ -346,7 +373,16 @@ def create_task_from_publication(pid: int, body: CreateTaskBody | None = None):
     pub = db.get_publication(pid)
     if not pub:
         raise HTTPException(404, "publication not found")
-    plan = (body.plan if body and body.plan else pub.get("analysis")) or {}
+    plan = dict((body.plan if body and body.plan else pub.get("analysis")) or {})
+    if pub.get("is_mention"):
+        guidance = re.sub(r"@p\.robot\b", "", pub.get("body") or "", flags=re.I).strip()
+        plan["needs_task"] = True
+        plan["priority"] = "high"
+        plan["addressed_to_robot"] = True
+        if not plan.get("summary"):
+            plan["summary"] = guidance or "Приоритетное указание для @p.robot"
+        if not plan.get("prompt"):
+            plan["prompt"] = guidance or plan["summary"]
     if pub.get("answered_by_version"):
         vnum = pub.get("answer_version_number")
         raise HTTPException(
@@ -441,6 +477,7 @@ def create_task_from_publication(pid: int, body: CreateTaskBody | None = None):
         "source_json": json.dumps(source, ensure_ascii=False),
         "work_dir": str(work),
         "render_dir": str(renders),
+        "priority": 1 if pub.get("is_mention") and not pub.get("answered_by_version") else 0,
     })
     db.update_publication(pid, status="task_created")
     return {"ok": True, "task": db.get_task(tid), "synx_task": synx_task}

@@ -634,11 +634,18 @@
     var map = { "new": "info", "analyzed": "warn", "task_created": "ok", "no_task": "", "analysis_error": "bad" };
     return '<span class="badge ' + (map[s] || "") + '">' + esc(s || "") + "</span>";
   }
+  function threadLabel(kind) {
+    if (kind === "version") return "версия";
+    if (kind === "task") return "задача";
+    if (kind === "entity") return "сущность";
+    return kind || "";
+  }
   function actionBadge(p) {
     if (p.answered_by_version) {
       var v = p.answer_version_number ? " v" + String(p.answer_version_number).padStart(3, "0") : "";
       return '<span class="badge ok" title="По комментарию уже выпущена версия">отвечено' + v + '</span>';
     }
+    if (p.is_mention) return '<span class="badge purple" title="Приоритетное указание для @p.robot">@p.robot</span>';
     if (p.needs_action === 1) return '<span class="badge bad">продолжение</span>';
     if (p.needs_action === 0) return '<span class="badge ok">версия</span>';
     return '<span class="badge warn">не разобрано</span>';
@@ -646,11 +653,15 @@
   function renderPublications() {
     var tb = $("pub-table").tBodies[0];
     tb.innerHTML = "";
-    state.pubs.forEach(function (p) {
+    var ordered = state.pubs.slice().sort(function (a, b) {
+      return (b.is_mention ? 1 : 0) - (a.is_mention ? 1 : 0);
+    });
+    ordered.forEach(function (p) {
       var tr = document.createElement("tr");
       tr.dataset.id = p.id;
       tr.dataset.action = p.needs_action === 1 ? "continuation" : (p.needs_action === 0 ? "version" : "unknown");
       tr.dataset.answered = p.answered_by_version ? "1" : "0";
+      tr.dataset.mention = p.is_mention ? "1" : "0";
       tr.dataset.images = (p.attachments || []).length ? "1" : "0";
       tr.dataset.hay = [p.project_alias, p.shot, p.thread_kind, p.version_number, p.author, p.body].join(" ").toLowerCase();
       var att = (p.attachments || []).map(function (a) {
@@ -659,7 +670,7 @@
       tr.innerHTML =
         '<td>' + esc(p.project_alias || p.project_id) + "</td>" +
         '<td><b>' + esc(p.shot || "") + "</b></td>" +
-        '<td>' + esc(p.thread_kind || "") + "</td>" +
+        '<td>' + esc(threadLabel(p.thread_kind)) + "</td>" +
         '<td>' + esc(p.version_number ? "v" + String(p.version_number).padStart(3, "0") : "") + "</td>" +
         '<td>' + esc(p.author || "") + "</td>" +
         '<td class="wrap" title="' + esc(p.body || "") + '">' + esc((p.body || "").replace(/\n/g, " ").slice(0, 260)) + "</td>" +
@@ -686,6 +697,7 @@
       if (action === "version" && tr.dataset.action !== "version") ok = false;
       if (action === "unknown" && tr.dataset.action !== "unknown") ok = false;
       if (action === "answered" && tr.dataset.answered !== "1") ok = false;
+      if (action === "mention" && tr.dataset.mention !== "1") ok = false;
       if (action === "images" && tr.dataset.images !== "1") ok = false;
       if (!showNoAction && tr.dataset.action === "version" && tr.dataset.answered !== "1") ok = false;
       if (!showAnswered && action !== "answered" && tr.dataset.answered === "1") ok = false;
@@ -816,7 +828,7 @@
       tr.innerHTML =
         '<td class="num">' + t.id + "</td>" +
         '<td><b>' + esc(t.shot || "") + "</b></td>" +
-        '<td class="wrap">' + esc(t.task_name || "") + "</td>" +
+        '<td class="wrap">' + (t.priority ? '<span class="badge purple" title="Приоритет: сообщение @p.robot">@p.robot</span> ' : "") + esc(t.task_name || "") + "</td>" +
         '<td>' + esc(t.task_type || "") + "</td>" +
         '<td>' + esc(t.bot || "") + "</td>" +
         '<td data-cell="status">' + taskBadge(t.status) + "</td>" +

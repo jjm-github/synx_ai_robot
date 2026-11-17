@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import re
 import threading
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -13,6 +14,15 @@ import requests
 requests.packages.urllib3.disable_warnings()
 
 BOT_LIKE_AUTHORS = {"p.robot", "review-service", "client-review"}
+ROBOT_LOGINS = {"p.robot", "prod.robot", "prod_robot", "prod robot"}
+MENTION_RE = re.compile(r"@p\.robot\b", re.I)
+
+
+def _is_robot_mention(body: object, author: object = "") -> bool:
+    text = str(body or "")
+    if not MENTION_RE.search(text):
+        return False
+    return str(author or "").strip().lower() not in ROBOT_LOGINS
 
 
 def _parse_dt(value: object):
@@ -180,6 +190,65 @@ class SynxClient:
         s.cookies.update(self.s.cookies.get_dict())
         return s
 
+    def scan_mention_events(self, limit: int = 1000) -> list[dict[str, Any]]:
+        """Recent synx events (tag/comment) that address @p.robot.
+
+        The event feed is global, so this catches mentions outside the
+        configured project scans as well. Failures are non-fatal.
+        """
+        try:
+            data = self._get(f"/api/events?limit={int(limit)}")
+        except Exception:
+            return []
+        events = data.get("events") or []
+        try:
+            projects = {p.get("alias"): p for p in self.projects()}
+        except Exception:
+            projects = {}
+        out: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for event in events:
+            kind = event.get("kind")
+            if kind not in ("tag", "comment"):
+                continue
+            body = (event.get("comment_body") or event.get("message")
+                    or event.get("review_comment") or "")
+            actor = event.get("actor_short") or event.get("actor_name") or ""
+            if not _is_robot_mention(body, actor):
+                continue
+            comment_id = event.get("comment_id")
+            entity_id = event.get("entity_id")
+            if not comment_id or not entity_id or comment_id in seen:
+                continue
+            seen.add(comment_id)
+            project = projects.get(event.get("project_alias")) or {}
+            project_id = project.get("id")
+            if not project_id:
+                continue
+            thread_kind = ("version" if event.get("version_id") else
+                           ("task" if event.get("task_id") else "entity"))
+            out.append({
+                "project_id": project_id,
+                "project_alias": project.get("alias") or event.get("project_alias"),
+                "entity_id": entity_id,
+                "shot": event.get("entity_name"),
+                "thread_kind": thread_kind,
+                "task_id": event.get("task_id"),
+                "version_id": event.get("version_id"),
+                "version_number": event.get("version_number"),
+                "comment_id": comment_id,
+                "author": actor,
+                "body": body,
+                "created_at": event.get("created_at"),
+                "attachments": [],
+                "status": "new",
+                "is_mention": 1,
+                "answered_by_version": 0,
+                "answer_version_number": None,
+                "answer_version_code": None,
+            })
+        return out
+
     def scan_project(self, project_alias: str,
                      progress: Callable[[str], None] | None = None,
                      include_task_comments: bool = True,
@@ -221,6 +290,12 @@ class SynxClient:
                         cs = []
                     for c in cs:
                         out.append(self._pub(project, ent, c, "task", None, t))
+            try:
+                cs = s.get(f"{self.base}/api/entities/{ent['id']}/comments", timeout=60).json().get("comments", [])
+            except Exception:
+                cs = []
+            for c in cs:
+                out.append(self._pub(project, ent, c, "entity", None, None))
             version_times = []
             for v in versions:
                 dt = _parse_dt(v.get("created_at"))
@@ -275,6 +350,8 @@ class SynxClient:
                 "mime": a.get("mime"),
                 "url": a.get("url"),
             })
+        author = comment.get("author") or comment.get("author_full") or ""
+        body = comment.get("body") or ""
         return {
             "project_id": project["id"],
             "project_alias": project.get("alias"),
@@ -285,11 +362,12 @@ class SynxClient:
             "version_id": (version or {}).get("id"),
             "version_number": (version or {}).get("version_number"),
             "comment_id": comment.get("id"),
-            "author": comment.get("author") or comment.get("author_full") or "",
-            "body": comment.get("body") or "",
+            "author": author,
+            "body": body,
             "created_at": comment.get("created_at"),
             "attachments": attachments,
             "status": "new",
+            "is_mention": 1 if _is_robot_mention(body, author) else 0,
             "answered_by_version": 0,
             "answer_version_number": None,
             "answer_version_code": None,

@@ -55,6 +55,11 @@ def classify_publication(pub: dict[str, Any]) -> dict[str, Any]:
                 "source": "reply",
                 "reason": "по комментарию уже выпущена версия" + (f" {vcode}" if vcode else "")}
 
+    if pub.get("is_mention"):
+        return {"needs_action": 1, "publication_type": "continuation",
+                "source": "mention",
+                "reason": "приоритетное сообщение с упоминанием @p.robot"}
+
     analysis = pub.get("analysis")
     if isinstance(analysis, str):
         try:

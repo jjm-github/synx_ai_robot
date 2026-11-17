@@ -132,12 +132,22 @@ class AIClient:
             "bots": [b.get("login") for b in bots if b.get("enabled", True)],
             "attachments": [a.get("name") for a in attachments],
             "saved_references": saved_refs,
+            "is_mention": bool(pub.get("is_mention")),
+            "mentioned_robot": "@p.robot" if pub.get("is_mention") else None,
         }
         prompt = (
             "Проанализируй публикацию synx и верни только JSON по заданной схеме. "
             "Если задача не нужна — needs_task=false. Контекст:\n" +
             json.dumps(context, ensure_ascii=False, indent=2)
         )
+        if pub.get("is_mention"):
+            prompt += (
+                "\n\nВАЖНО: сообщение адресовано роботу @p.robot. Это приоритетное указание. "
+                "Обязательно определи конкретное действие, что именно должен сделать робот, "
+                "и заполни summary/prompt практическим руководством к действию. "
+                "needs_task=true. Если в сообщении только приветствие или благодарность, "
+                "всё равно сформулируй задачу проверить сообщение и ответить по существу."
+            )
         content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
         content.extend(image_parts)
         text, usage = self.chat([
@@ -145,6 +155,15 @@ class AIClient:
             {"role": "user", "content": content},
         ])
         plan = _extract_json(text)
+        if pub.get("is_mention"):
+            guidance = re.sub(r"@p\.robot\b", "", pub.get("body") or "", flags=re.I).strip()
+            plan["needs_task"] = True
+            plan["priority"] = "high"
+            plan["addressed_to_robot"] = True
+            if not plan.get("summary"):
+                plan["summary"] = guidance or "Приоритетное указание для @p.robot"
+            if not plan.get("prompt"):
+                plan["prompt"] = guidance or plan["summary"]
         plan["_usage"] = usage
         plan["_raw"] = text
         plan["_references_saved"] = saved_refs
