@@ -122,6 +122,22 @@ PDF на стандартных страницах, проверит его и �
 
 Не ходи по кругу через fs_list/synx_versions: один вызов publish_daily_pdf.
 
+### Пересборка по базовой версии
+
+Если пользователь ссылается на версию («версия 13», «v013») и просит изменить
+layout — чёрный фон, 300 dpi, текст на 20% меньше, кадр по центру, без полей —
+это пересборка, а не новая генерация. Бери кадры задачи и вызывай
+`publish_daily_pdf` ОДИН раз с:
+
+- `base_version` — версия, на которую ссылаются;
+- `dpi` — 300, если сказано «300 dpi»;
+- `text_scale` — 0.8, если «текст на 20% меньше»;
+- `image_valign` — `center`, если «по центру/по вертикали»;
+- `background` — `#000000` для чёрных страниц.
+
+Не используй `publish_images_as_version` для таких правок и не генерируй
+кадры заново. Опирайся на версию, которую назвал пользователь.
+
 ## ffmpeg и MCP
 
 `ffmpeg`/`ffprobe` установлены и являются базовыми инструментами: используй
@@ -318,6 +334,11 @@ DAILY_PDF_TOOL = {
                 "task_id": {"type": "integer", "description": "Local task id with frame_*.png in its work folder"},
                 "title": {"type": "string", "default": "DAILY"},
                 "page_size": {"type": "string", "enum": ["A4", "A3"], "default": "A4"},
+                "dpi": {"type": "integer", "default": 144},
+                "text_scale": {"type": "number", "default": 1.0},
+                "image_valign": {"type": "string", "enum": ["top", "center"], "default": "top"},
+                "background": {"type": "string", "default": "#000000"},
+                "base_version": {"type": "string", "description": "Reference version, e.g. v013"},
                 "publish": {"type": "boolean", "default": True},
                 "bot": {"type": "string"},
                 "prompts": {"type": "array", "items": {"type": "string"},
@@ -831,6 +852,102 @@ def _news_request(text: str) -> dict[str, Any] | None:
             "date_to": d1.isoformat(), "label": label}
 
 
+def _pdf_remix_request(text: str) -> dict[str, Any] | None:
+    low = (text or "").lower()
+    if not re.search(r"(pdf|пдф)", low, re.I):
+        return None
+    if not any(k in low for k in ("черн", "dpi", "текст", "центр", "поля", "кадр", "страниц", "верси")):
+        return None
+    if not any(k in low for k in ("сделай", "собери", "исправ", "передел", "опубликуй", "сделать")):
+        return None
+    base_version = None
+    patterns = (
+        r"относительно\s+(?:верси[июя]?\s*)?v?(\d{1,3})",
+        r"на\s+основе\s+(?:верси[июя]?\s*)?v?(\d{1,3})",
+        r"чем\s+в\s+верси[июя]?\s*v?(\d{1,3})",
+        r"(\d{1,3})\s+верси",
+        r"базов[а-я]*\s+(?:верси[июя]?\s*)?v?(\d{1,3})",
+    )
+    for pat in patterns:
+        m = re.search(pat, low)
+        if m:
+            base_version = f"v{int(m.group(1)):03d}"
+            break
+    if not base_version:
+        m = re.search(r"верси[юия]?\s*(?:v)?(\d{1,3})", low)
+        if not m:
+            m = re.search(r"\bv(\d{1,3})\b", low)
+        if m:
+            base_version = f"v{int(m.group(1)):03d}"
+    dpi = 300
+    m = re.search(r"(\d{2,4})\s*dpi", low)
+    if m:
+        dpi = max(72, min(1200, int(m.group(1))))
+    text_scale = 1.0
+    m = re.search(r"на\s*(\d{1,2})\s*%\s*(?:меньше|меньше\s+на)?", low)
+    if m:
+        text_scale = max(0.4, 1.0 - int(m.group(1)) / 100.0)
+    elif "текст" in low and "меньше" in low:
+        text_scale = 0.8
+    image_valign = "center" if any(k in low for k in (
+        "по-вертикали", "по вертикали", "по центру", "середине", "строго по середине")) else "top"
+    return {"base_version": base_version, "dpi": dpi, "text_scale": text_scale,
+            "image_valign": image_valign, "background": "#000000"}
+
+
+def _remix_task() -> dict[str, Any] | None:
+    tasks = db.list_tasks(limit=100)
+    for t in tasks:
+        wd = Path(str(t.get("work_dir") or ""))
+        if wd.is_dir() and list(wd.glob("frame_*.png")):
+            if str(t.get("task_name") or "") in ("frames_pdf", "cubism_frames") or str(t.get("shot") or "") == "p002_0130":
+                return t
+    for t in tasks:
+        wd = Path(str(t.get("work_dir") or ""))
+        if wd.is_dir() and list(wd.glob("frame_*.png")):
+            return t
+    return None
+
+
+def _daily_items_from_task(task: dict[str, Any]) -> list[dict[str, Any]]:
+    work = Path(str(task.get("work_dir") or ""))
+    images = sorted(work.glob("frame_*.png"))
+    meta = {}
+    try:
+        meta = json.loads((work / "generation_meta.json").read_text(encoding="utf-8"))
+    except Exception:
+        meta = {}
+    by_file = {str(x.get("file")): x for x in (meta.get("images") or []) if isinstance(x, dict)}
+    plan = task.get("plan_json") or {}
+    wconf = (plan.get("workflow_config") or {}) if isinstance(plan, dict) else {}
+    hw = meta.get("hardware") or system_info.hardware_info()
+    out = []
+    for i, p in enumerate(images, 1):
+        m = by_file.get(p.name) or {}
+        resolution = m.get("resolution") or ""
+        if not resolution:
+            try:
+                from PIL import Image as _Image
+                with _Image.open(p) as _im:
+                    resolution = f"{_im.width}x{_im.height}"
+            except Exception:
+                resolution = ""
+        out.append({
+            "path": str(p),
+            "title": m.get("title") or p.stem,
+            "prompt_en": m.get("prompt_en") or (plan.get("prompt") if isinstance(plan, dict) else "") or "",
+            "prompt_ru": m.get("prompt_ru") or "",
+            "models_used": m.get("models") or wconf.get("models") or {},
+            "loras": m.get("loras") or [],
+            "elapsed_sec": m.get("elapsed_sec") if m.get("elapsed_sec") is not None else None,
+            "elapsed_note": m.get("elapsed_note") or "",
+            "generation_kind": "local_comfy",
+            "api_cost": 0, "video_seconds": None,
+            "resolution": resolution, "hardware": hw,
+        })
+    return out
+
+
 def _publish_request(text: str) -> bool:
     low = (text or "").lower()
     if not re.search(r"(пдф|pdf)", low, re.I):
@@ -1140,6 +1257,11 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
         result = publish_flow.publish_daily_pdf(
             task_id, items, title=args.get("title") or "DAILY",
             page_size=args.get("page_size") or "A4",
+            dpi=int(args.get("dpi") or 144),
+            text_scale=float(args.get("text_scale") if args.get("text_scale") is not None else 1.0),
+            image_valign=args.get("image_valign") or "top",
+            background=args.get("background") or "#000000",
+            base_version=args.get("base_version"),
             publish=bool(args.get("publish", True)), bot_login=args.get("bot"),
             progress=progress)
         return result, [], None
@@ -1234,6 +1356,48 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
     content = ""
     tool_used = False
     ai_error = False
+
+    # PDF layout remix: "based on v013, make vN with black pages, 300 dpi,
+    # 20% smaller text, image centered". This must run before the generic
+    # PDF-publish path, otherwise the robot falls back to a white A4 PDF.
+    remix = _pdf_remix_request(text or "")
+    if remix:
+        try:
+            task = _remix_task()
+            if not task:
+                raise ValueError("не нашёл задачу с кадрами frame_*.png")
+            items = _daily_items_from_task(task)
+            if not items:
+                raise ValueError("в задаче нет кадров")
+            emit({"type": "stage", "text": "Беру базовую версию и кадры задачи..."})
+            result = publish_flow.publish_daily_pdf(
+                int(task["id"]), items, title="DAILY PDF",
+                page_size="A4", dpi=remix["dpi"],
+                text_scale=remix["text_scale"],
+                image_valign=remix["image_valign"],
+                background=remix["background"],
+                base_version=remix.get("base_version"),
+                publish=True, progress=emit)
+            corrected = (f" Базовая версия: {remix.get('base_version')}." if remix.get("base_version") else "")
+            content = (
+                f"Готово. Собрал PDF: {result.get('pages')} страниц, "
+                f"{result.get('page_size')}, {result.get('dpi')} dpi.{corrected}\n\n"
+                f"- Фон: {result.get('background')}; текст: {int(round(float(result.get('text_scale') or 1) * 100))}% от базы; "
+                f"кадр: {result.get('image_valign')} по вертикали.\n"
+                f"- PDF: `{result.get('pdf')}`\n"
+                f"- Рабочая папка: `{result.get('work_dir')}`\n"
+                f"- Render: `{result.get('render_dir')}`\n"
+                f"- Версия: **{result.get('version_code')}**\n"
+                f"- Ссылка: {result.get('url') or '—'}"
+                + (f"\n- Внимание: {result.get('warning')}" if result.get("warning") else "")
+            )
+        except Exception as exc:
+            content = f"Не удалось пересобрать PDF по базовой версии: {exc}"
+        emit({"type": "stage", "text": "Готово"})
+        db.add_chat_message(session_id, "assistant", content, generated=[],
+                            usage=usage, playlist_text=None, progress=stages)
+        return {"messages": db.list_chat_messages(session_id), "usage": usage,
+                "generated": [], "playlist_text": None, "stages": stages}
 
     # Explicit "make a PDF from these frames and publish a version" requests.
     if _publish_request(text or ""):
