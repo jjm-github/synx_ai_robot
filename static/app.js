@@ -293,6 +293,22 @@
     var im = e.target.closest("[data-chat-image]");
     if (im) openViewer(im.src, im.dataset.title || "image");
   });
+  $("chat-messages").addEventListener("contextmenu", function (e) {
+    var msg = e.target.closest(".msg");
+    if (!msg) return;
+    var txt = msg.querySelector(".msg-text");
+    if (!txt) return;
+    e.preventDefault();
+    var text = (txt.innerText || txt.textContent || "").trim();
+    if (!text) return;
+    var isUser = msg.classList.contains("user");
+    openContextMenu(e.clientX, e.clientY, [
+      { label: isUser ? "Копировать запрос" : "Копировать ответ", fn: function () { copyText(text); } },
+      { label: "Копировать как цитату", fn: function () {
+        copyText(text.split("\n").map(function (line) { return "> " + line; }).join("\n"));
+      } }
+    ]);
+  });
 
   // ---------- MCP / skills ----------
   var mcpServers = [];
