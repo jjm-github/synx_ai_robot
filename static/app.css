@@ -471,3 +471,18 @@ select option { background: var(--field-bg); color: var(--ink); }
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 2px;
 }
+
+.folder-list { display: grid; gap: 6px; margin-bottom: 12px; }
+.folder-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--field-bg); }
+.folder-add { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.side-action { margin-top: auto; margin-bottom: 10px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--field-bg); color: var(--ink); text-align: left; cursor: pointer; }
+.side-action:hover { background: var(--hover); border-color: var(--accent-soft-line); }
+.mcp-list { display: grid; gap: 8px; margin-bottom: 14px; }
+.mcp-row { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--field-bg); display: grid; gap: 6px; }
+.mcp-row-head { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.mcp-row-head b { color: var(--ink); }
+.mcp-fields { display: grid; grid-template-columns: 1fr 1fr auto; gap: 6px; align-items: center; }
+.mcp-result { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: flex; gap: 10px; justify-content: space-between; align-items: center; margin-top: 6px; background: var(--panel); }
+.mcp-result small { color: var(--ink-soft); }
+.mcp-search { display: flex; gap: 8px; margin-bottom: 8px; }

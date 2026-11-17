@@ -48,6 +48,9 @@ def init() -> None:
                 needs_action INTEGER,
                 publication_type TEXT,
                 analysis_source TEXT,
+                answered_by_version INTEGER DEFAULT 0,
+                answer_version_number INTEGER,
+                answer_version_code TEXT,
                 analysis_tokens INTEGER DEFAULT 0,
                 created_db TEXT NOT NULL,
                 updated_db TEXT NOT NULL
@@ -138,7 +141,8 @@ def init() -> None:
         pcols = {r["name"] for r in c.execute("PRAGMA table_info(publications)").fetchall()}
         for col, typ in (("analysis_md", "TEXT"), ("analysis_md_path", "TEXT"),
                          ("needs_action", "INTEGER"), ("publication_type", "TEXT"),
-                         ("analysis_source", "TEXT")):
+                         ("analysis_source", "TEXT"), ("answered_by_version", "INTEGER DEFAULT 0"),
+                         ("answer_version_number", "INTEGER"), ("answer_version_code", "TEXT")):
             if col not in pcols:
                 c.execute(f"ALTER TABLE publications ADD COLUMN {col} {typ}")
         ccols = {r["name"] for r in c.execute("PRAGMA table_info(chat_messages)").fetchall()}
@@ -179,21 +183,47 @@ def add_publication(pub: dict[str, Any]) -> int | None:
                 """INSERT INTO publications
                    (project_id, project_alias, entity_id, shot, thread_kind, task_id,
                     version_id, version_number, comment_id, author, body, created_at,
-                    attachments_json, status, created_db, updated_db)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    attachments_json, status, answered_by_version, answer_version_number,
+                    answer_version_code, created_db, updated_db)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     pub.get("project_id"), pub.get("project_alias"), pub.get("entity_id"),
                     pub.get("shot"), pub.get("thread_kind"), pub.get("task_id"),
                     pub.get("version_id"), pub.get("version_number"), pub["comment_id"],
                     pub.get("author"), pub.get("body"), pub.get("created_at"),
                     json.dumps(pub.get("attachments") or [], ensure_ascii=False),
-                    pub.get("status", "new"), now(), now(),
+                    pub.get("status", "new"), int(pub.get("answered_by_version") or 0),
+                    pub.get("answer_version_number"), pub.get("answer_version_code"),
+                    now(), now(),
                 ),
             )
             c.commit()
             return int(cur.lastrowid or 0)
         except sqlite3.IntegrityError:
             return None
+
+
+def sync_publication_answer(comment_id: str, answered: bool, version_number: int | None = None,
+                            version_code: str | None = None) -> None:
+    """Keep the "answered by version" flag in sync on repeated scans."""
+    if answered:
+        execute(
+            """UPDATE publications
+               SET answered_by_version=1, answer_version_number=?, answer_version_code=?,
+                   needs_action=0, publication_type='version', analysis_source='reply',
+                   updated_db=?
+               WHERE comment_id=?
+                 AND (answered_by_version IS NOT 1 OR answer_version_number IS NOT ?)""",
+            (version_number, version_code, now(), comment_id, version_number),
+        )
+    else:
+        execute(
+            """UPDATE publications
+               SET answered_by_version=0, answer_version_number=NULL, answer_version_code=NULL,
+                   updated_db=?
+               WHERE comment_id=? AND answered_by_version=1""",
+            (now(), comment_id),
+        )
 
 
 def list_publications(status: str | None = None, limit: int = 200) -> list[dict[str, Any]]:

@@ -222,6 +222,43 @@
     try { await api("/api/chat/clear?session_id=" + encodeURIComponent(chatSession), { method: "POST" }); chatAttachments = []; renderChatChips(); await loadChat(); }
     catch (e) { toast(e.message, true); }
   });
+  var folderRoots = [];
+  async function openFoldersModal() {
+    try { folderRoots = (await api("/api/filesystem/roots")).roots || []; }
+    catch (e) { toast(e.message, true); return; }
+    var rows = folderRoots.map(function (p) {
+      return '<div class="folder-row"><span class="mono">' + esc(p) + '</span><button class="btn danger" data-folder-remove="' + esc(p) + '">Убрать</button></div>';
+    }).join("") || '<div class="muted">Пока нет рабочих папок.</div>';
+    var body = '<div class="folder-list">' + rows + '</div>' +
+      '<div class="folder-add"><input class="input grow" id="folder-path" placeholder="/mnt/projects/..."> ' +
+      '<button class="btn" id="folder-pick">Выбрать...</button> <button class="btn primary" id="folder-add-btn">Добавить</button></div>' +
+      '<div class="muted" style="margin-top:8px">Внутри этих папок робот имеет полный доступ: читать, создавать, изменять и удалять файлы.</div>';
+    openModal("Рабочие папки робота", body, []);
+    setTimeout(function () {
+      var add = $("folder-add-btn"), pick = $("folder-pick"), input = $("folder-path");
+      async function addPath(path) {
+        if (!path) return;
+        try { var d = await api("/api/filesystem/roots", { method: "POST", body: JSON.stringify({ path: path }) }); folderRoots = d.roots; toast("Папка добавлена"); closeModal(); openFoldersModal(); }
+        catch (e) { toast(e.message, true); }
+      }
+      add && add.addEventListener("click", function () { addPath(input.value.trim()); });
+      pick && pick.addEventListener("click", async function () {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.pick_folder) {
+          var r = await window.pywebview.api.pick_folder();
+          if (r && r.ok) await addPath(r.path);
+        } else {
+          var p = prompt("Путь к папке:"); if (p) await addPath(p);
+        }
+      });
+      document.querySelectorAll("[data-folder-remove]").forEach(function (b) {
+        b.addEventListener("click", async function () {
+          try { var d = await api("/api/filesystem/roots?path=" + encodeURIComponent(b.dataset.folderRemove), { method: "DELETE" }); folderRoots = d.roots; toast("Папка убрана"); closeModal(); openFoldersModal(); }
+          catch (e) { toast(e.message, true); }
+        });
+      });
+    }, 0);
+  }
+  $("chat-folders").addEventListener("click", openFoldersModal);
   $("chat-session").addEventListener("change", function () {
     chatSession = this.value;
     loadChat();
@@ -256,6 +293,81 @@
     var im = e.target.closest("[data-chat-image]");
     if (im) openViewer(im.src, im.dataset.title || "image");
   });
+
+  // ---------- MCP / skills ----------
+  var mcpServers = [];
+  async function openMCPModal() {
+    try { mcpServers = (await api("/api/mcp/servers")).servers || []; }
+    catch (e) { toast(e.message, true); return; }
+    var list = mcpServers.map(function (s, i) {
+      return '<div class="mcp-row">' +
+        '<div class="mcp-row-head"><b>' + esc(s.name || "MCP") + '</b>' +
+        '<label class="check inline-check"><input type="checkbox" data-mcp-enabled="' + i + '" ' + (s.enabled ? "checked" : "") + '> активен</label></div>' +
+        '<div class="mcp-fields">' +
+        '<input class="input mono" data-mcp-command="' + i + '" placeholder="команда запуска" value="' + esc(s.command || "") + '">' +
+        '<input class="input mono" data-mcp-args="' + i + '" placeholder="аргументы через пробел" value="' + esc((s.args || []).join(" ")) + '">' +
+        '<span><button class="btn" data-mcp-save="' + i + '">Сохранить</button> <button class="btn danger" data-mcp-remove="' + i + '">×</button></span>' +
+        '</div>' +
+        '<small class="muted mono">' + esc(s.path || s.source_url || "") + '</small></div>';
+    }).join("") || '<div class="muted">Нет MCP-серверов. Найди и установи ниже.</div>';
+    var body = '<h3 style="margin:0 0 8px">Активные навыки / MCP</h3>' +
+      '<div class="mcp-list">' + list + '</div>' +
+      '<div class="mcp-search"><input class="input grow" id="mcp-q" placeholder="Поиск MCP-серверов на GitHub...">' +
+      '<button class="btn" id="mcp-search-btn">Искать</button>' +
+      '<button class="btn" id="mcp-add-manual">Добавить вручную</button></div>' +
+      '<div id="mcp-results"></div>' +
+      '<div class="muted" style="margin-top:8px">Установка клонирует репозиторий в data/mcp. Команду запуска и аргументы нужно проверить и включить вручную.</div>';
+    openModal("MCP / навыки", body, []);
+    setTimeout(function () {
+      document.querySelectorAll("[data-mcp-save]").forEach(function (b) {
+        b.addEventListener("click", async function () {
+          var i = Number(b.dataset.mcpSave); var srv = mcpServers[i];
+          var cmd = document.querySelector('[data-mcp-command="' + i + '"]').value.trim();
+          var args = document.querySelector('[data-mcp-args="' + i + '"]').value.trim().split(/\s+/).filter(Boolean);
+          var enabled = document.querySelector('[data-mcp-enabled="' + i + '"]').checked;
+          try { await api("/api/mcp/servers", { method: "POST", body: JSON.stringify({ server: Object.assign({}, srv, { command: cmd, args: args, enabled: enabled }) }) }); toast("MCP сохранён"); openMCPModal(); }
+          catch (e) { toast(e.message, true); }
+        });
+      });
+      document.querySelectorAll("[data-mcp-remove]").forEach(function (b) {
+        b.addEventListener("click", async function () {
+          var i = Number(b.dataset.mcpRemove); if (!confirm("Убрать " + (mcpServers[i].name || "MCP") + "?")) return;
+          try { await api("/api/mcp/servers/" + encodeURIComponent(mcpServers[i].id), { method: "DELETE" }); toast("Убрано"); openMCPModal(); }
+          catch (e) { toast(e.message, true); }
+        });
+      });
+      document.querySelectorAll("[data-mcp-enabled]").forEach(function (cb) {
+        cb.addEventListener("change", function () {
+          var i = Number(cb.dataset.mcpEnabled); mcpServers[i].enabled = cb.checked;
+        });
+      });
+      $("mcp-search-btn").addEventListener("click", async function () {
+        var q = $("mcp-q").value.trim(); if (!q) return;
+        var box = $("mcp-results"); box.innerHTML = '<div class="muted">Ищу...</div>';
+        try {
+          var d = await api("/api/mcp/search", { method: "POST", body: JSON.stringify({ query: q, limit: 12 }) });
+          box.innerHTML = (d.results || []).map(function (r, i) {
+            return '<div class="mcp-result"><div><b>' + esc(r.full_name) + '</b> <small>★ ' + (r.stars || 0) + '</small><br><small>' + esc(r.description || "") + '</small></div><button class="btn" data-mcp-install="' + i + '">Установить</button></div>';
+          }).join("") || '<div class="muted">Ничего не найдено.</div>';
+          box.querySelectorAll("[data-mcp-install]").forEach(function (b) {
+            b.addEventListener("click", async function () {
+              var r = d.results[Number(b.dataset.mcpInstall)]; b.disabled = true; b.textContent = "Клонирую...";
+              try { await api("/api/mcp/install", { method: "POST", body: JSON.stringify({ url: r.clone_url, name: r.name }) }); toast("Установлено"); openMCPModal(); }
+              catch (e) { b.disabled = false; b.textContent = "Установить"; toast(e.message, true); }
+            });
+          });
+        } catch (e) { box.innerHTML = '<div class="muted">' + esc(e.message) + '</div>'; }
+      });
+      $("mcp-add-manual").addEventListener("click", async function () {
+        var name = prompt("Название MCP/навыка:"); if (!name) return;
+        var command = prompt("Команда запуска (например python или npx):"); if (!command) return;
+        var args = prompt("Аргументы через пробел:", "") || "";
+        try { await api("/api/mcp/servers", { method: "POST", body: JSON.stringify({ server: { name: name, command: command, args: args.split(/\s+/).filter(Boolean), enabled: false, transport: "stdio" } }) }); toast("Добавлено"); openMCPModal(); }
+        catch (e) { toast(e.message, true); }
+      });
+    }, 0);
+  }
+  $("mcp-btn").addEventListener("click", openMCPModal);
 
   // ---------- image viewer ----------
   var viewer = { scale: 1, x: 0, y: 0, src: "", filename: "", down: false, moved: false, sx: 0, sy: 0, px: 0, py: 0 };
@@ -523,6 +635,10 @@
     return '<span class="badge ' + (map[s] || "") + '">' + esc(s || "") + "</span>";
   }
   function actionBadge(p) {
+    if (p.answered_by_version) {
+      var v = p.answer_version_number ? " v" + String(p.answer_version_number).padStart(3, "0") : "";
+      return '<span class="badge ok" title="По комментарию уже выпущена версия">отвечено' + v + '</span>';
+    }
     if (p.needs_action === 1) return '<span class="badge bad">продолжение</span>';
     if (p.needs_action === 0) return '<span class="badge ok">версия</span>';
     return '<span class="badge warn">не разобрано</span>';
@@ -534,6 +650,7 @@
       var tr = document.createElement("tr");
       tr.dataset.id = p.id;
       tr.dataset.action = p.needs_action === 1 ? "continuation" : (p.needs_action === 0 ? "version" : "unknown");
+      tr.dataset.answered = p.answered_by_version ? "1" : "0";
       tr.dataset.images = (p.attachments || []).length ? "1" : "0";
       tr.dataset.hay = [p.project_alias, p.shot, p.thread_kind, p.version_number, p.author, p.body].join(" ").toLowerCase();
       var att = (p.attachments || []).map(function (a) {
@@ -561,14 +678,17 @@
     var q = ($("pub-filter").value || "").trim().toLowerCase();
     var action = $("pub-action").value;
     var showNoAction = $("pub-show-noaction").checked;
+    var showAnswered = $("pub-show-answered").checked;
     Array.prototype.forEach.call($("pub-table").tBodies[0].rows, function (tr) {
       var ok = true;
       if (q && (tr.dataset.hay || "").indexOf(q) === -1) ok = false;
       if (action === "continuation" && tr.dataset.action !== "continuation") ok = false;
       if (action === "version" && tr.dataset.action !== "version") ok = false;
       if (action === "unknown" && tr.dataset.action !== "unknown") ok = false;
+      if (action === "answered" && tr.dataset.answered !== "1") ok = false;
       if (action === "images" && tr.dataset.images !== "1") ok = false;
-      if (!showNoAction && tr.dataset.action === "version") ok = false;
+      if (!showNoAction && tr.dataset.action === "version" && tr.dataset.answered !== "1") ok = false;
+      if (!showAnswered && action !== "answered" && tr.dataset.answered === "1") ok = false;
       tr.style.display = ok ? "" : "none";
     });
   }
@@ -593,6 +713,7 @@
   $("pub-filter").addEventListener("input", applyPubFilters);
   $("pub-action").addEventListener("change", applyPubFilters);
   $("pub-show-noaction").addEventListener("change", applyPubFilters);
+  $("pub-show-answered").addEventListener("change", applyPubFilters);
   $("pub-status").addEventListener("change", loadPublications);
   $("pub-refresh").addEventListener("click", loadPublications);
   $("pub-reclassify").addEventListener("click", async function () {
@@ -629,6 +750,11 @@
     var sel = RobotTables.selected($("pub-table"));
     if (!sel.length) return toast("Ничего не выбрано", true);
     for (var i = 0; i < sel.length; i++) {
+      var pubRow = state.pubs.find(function (x) { return x.id === sel[i]; });
+      if (pubRow && pubRow.answered_by_version) {
+        toast("Публикация " + sel[i] + ": уже отвечена версией — задача не нужна", true);
+        continue;
+      }
       try {
         var d = await api("/api/publications/" + sel[i] + "/create-task", { method: "POST", body: "{}" });
         toast("Задача создана: " + (d.task ? d.task.task_name : ""));
@@ -652,8 +778,11 @@
       ? '<div class="markdown-body">' + html + '</div>' +
         '<div class="muted" style="margin-top:10px">Файл: <span class="mono">' + esc(p.analysis_md_path || "") + '</span></div>'
       : '<div class="pre">План ещё не готов. Нажми «Разобрать».</div>';
+    if (p.answered_by_version) {
+      body += '<div class="muted" style="margin-top:10px">По этому комментарию уже выпущена версия — создание задачи не требуется.</div>';
+    }
     openModal("План задачи · " + (p.shot || ""), body,
-      plan ? [{ label: "Создать задачу", primary: true, fn: async function () {
+      plan && !p.answered_by_version ? [{ label: "Создать задачу", primary: true, fn: async function () {
         try {
           var d = await api("/api/publications/" + id + "/create-task", { method: "POST", body: "{}" });
           toast("Задача создана: " + d.task.task_name); closeModal(); await loadPublications(); await loadTasks();

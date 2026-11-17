@@ -23,6 +23,7 @@
       <button class="nav-btn" data-view="chat">Чат</button>
       <button class="nav-btn" data-view="settings">Настройки</button>
     </nav>
+    <button class="side-action" id="mcp-btn">◈ MCP / навыки</button>
     <div class="side-status">
       <div class="status-line"><span id="synx-dot" class="dot"></span><span id="synx-status">synx: не проверен</span></div>
       <div class="status-line"><span id="pipeline-dot" class="dot"></span><span id="pipeline-status">конвейер: остановлен</span></div>
@@ -59,9 +60,11 @@
           <option value="continuation">с продолжением</option>
           <option value="version">просто версия</option>
           <option value="unknown">не разобрано</option>
+          <option value="answered">отвечено версией</option>
           <option value="images">с картинками</option>
         </select>
         <label class="check inline-check"><input type="checkbox" id="pub-show-noaction" checked> Показывать версии</label>
+        <label class="check inline-check"><input type="checkbox" id="pub-show-answered"> Показывать отвеченные</label>
         <button class="btn" id="pub-reclassify">Переанализировать всё</button>
         <button class="btn" id="pub-analyze-batch">Разметить AI</button>
         <button class="btn" id="pub-refresh">Обновить</button>
@@ -143,6 +146,7 @@
           </div>
           <div class="chat-head-actions">
             <select class="input" id="chat-session"></select>
+            <button class="btn" id="chat-folders">Рабочие папки</button>
             <button class="btn" id="chat-new">Новый чат</button>
             <button class="btn" id="chat-clear">Очистить</button>
           </div>

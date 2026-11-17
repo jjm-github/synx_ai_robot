@@ -13,6 +13,7 @@ import requests
 from PIL import Image
 
 import db
+import fs_tools
 import synx_tools
 from ai import AIClient, AIError, _data_url
 from config import ROOT, load_config
@@ -133,7 +134,39 @@ SYNX_TOOLS = [
     },
 ]
 
-TOOLS = [IMAGE_TOOL] + SYNX_TOOLS
+FS_TOOLS = [
+    {"type": "function", "function": {
+        "name": "fs_list",
+        "description": "List allowed filesystem roots or a directory inside them.",
+        "parameters": {"type": "object", "properties": {
+            "path": {"type": "string", "description": "Empty for roots, or absolute path inside an allowed root"}
+        }},
+    }},
+    {"type": "function", "function": {
+        "name": "fs_read",
+        "description": "Read a text file or binary file inside an allowed root.",
+        "parameters": {"type": "object", "properties": {
+            "path": {"type": "string"},
+            "max_bytes": {"type": "integer", "default": 300000}
+        }, "required": ["path"]},
+    }},
+    {"type": "function", "function": {
+        "name": "fs_write",
+        "description": "Write a file inside an allowed root. Full access inside configured roots.",
+        "parameters": {"type": "object", "properties": {
+            "path": {"type": "string"},
+            "content": {"type": "string"},
+            "base64_data": {"type": "boolean", "default": False}
+        }, "required": ["path", "content"]},
+    }},
+    {"type": "function", "function": {
+        "name": "fs_delete",
+        "description": "Delete a file or directory inside an allowed root.",
+        "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
+    }},
+]
+
+TOOLS = [IMAGE_TOOL] + SYNX_TOOLS + FS_TOOLS
 GEN_RE = re.compile(
     r"(нарисуй|сгенер|сгенерируй|сделай\s+(картин|изображ|кадр|арт)|"
     r"draw|generate\s+(an?\s+)?image|make\s+(an?\s+)?image|create\s+(an?\s+)?image)",
@@ -151,8 +184,10 @@ def _synx_guide() -> str:
 
 
 def _system() -> str:
+    roots = "\n".join("- " + r for r in fs_tools.roots()) or "- (нет папок)"
     return (CHAT_SYSTEM + f"\n\nСегодня: {date.today().isoformat()}.\n\n"
-            "## Synx API\n\n" + _synx_guide())
+            "## Synx API\n\n" + _synx_guide() +
+            "\n\n## Рабочие папки (полный доступ)\n" + roots)
 
 
 def _refs_for_generation(images: list[dict[str, Any]]) -> list[str]:
@@ -299,6 +334,21 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
                                      bool(args.get("playable_only", True)))
         return {"ok": True, "count": d["count"], "from": d["from"], "to": d["to"],
                 "items": d["items"]}, [], d["text"]
+    if name == "fs_list":
+        return fs_tools.list_dir(args.get("path") or ""), [], None
+    if name == "fs_read":
+        r = fs_tools.read_file(args.get("path") or "", int(args.get("max_bytes") or 300000))
+        gen = []
+        if r.get("kind") == "binary" and str(r.get("mime", "")).startswith("image/"):
+            from urllib.parse import quote
+            gen = [{"name": Path(r["path"]).name, "path": r["path"],
+                    "url": "/api/fs/file?path=" + quote(r["path"])}]
+        return r, gen, None
+    if name == "fs_write":
+        return fs_tools.write_file(args.get("path") or "", args.get("content") or "",
+                                   bool(args.get("base64_data"))), [], None
+    if name == "fs_delete":
+        return fs_tools.delete_path(args.get("path") or ""), [], None
     return {"error": "unknown tool " + name}, [], None
 
 

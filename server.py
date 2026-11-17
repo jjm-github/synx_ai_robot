@@ -21,6 +21,8 @@ from ai import AIClient, AIError
 from config import DATA_DIR, ROOT, load_bots, load_config, save_bots, save_config, save_system_prompt
 from paths import render_dir, task_work_dir
 from classify import classify_publication
+import fs_tools
+import mcp_manager
 from links import task_version_url
 from plan_md import save_plan_markdown
 from chat import (IMAGES as CHAT_IMAGES, UPLOADS as CHAT_UPLOADS,
@@ -67,6 +69,23 @@ class ChatSessionBody(BaseModel):
     title: str = "Новый чат"
 
 
+class RootsBody(BaseModel):
+    roots: list[str] = []
+
+
+class RootAddBody(BaseModel):
+    path: str
+
+
+class MCPInstallBody(BaseModel):
+    url: str
+    name: str | None = None
+
+
+class MCPServerBody(BaseModel):
+    server: dict[str, Any]
+
+
 def _synx() -> SynxClient:
     cfg = load_config()
     return SynxClient(cfg["synx"]["base_url"], cfg["synx"]["login"], cfg["synx"]["password"])
@@ -88,6 +107,16 @@ def _analyze_publication(pid: int) -> dict[str, Any]:
     pub = db.get_publication(pid)
     if not pub:
         raise ValueError("publication not found")
+    if pub.get("answered_by_version"):
+        vnum = pub.get("answer_version_number")
+        plan = {"needs_task": False, "task_type": None,
+                "summary": "Комментарий уже отвечен версией" + (f" v{int(vnum):03d}" if vnum else ""),
+                "reason": "answered_by_version"}
+        db.update_publication(
+            pid, status="no_task", analysis_json=json.dumps(plan, ensure_ascii=False),
+            needs_action=0, publication_type="version", analysis_source="reply",
+        )
+        return plan
     cfg = load_config()
     client = _synx()
     project = _project_for(client, project_id=pub["project_id"])
@@ -142,6 +171,11 @@ def _scan_once(projects: list[str] | None = None) -> dict[str, Any]:
             if new_id:
                 n += 1
                 new_ids.append(new_id)
+            else:
+                db.sync_publication_answer(
+                    rec.get("comment_id"), bool(rec.get("answered_by_version")),
+                    rec.get("answer_version_number"), rec.get("answer_version_code"),
+                )
         inserted += n
         detail.append({"project": alias, "comments": len(recs), "new": n})
     db.set_meta("last_scan", db.now())
@@ -313,12 +347,23 @@ def create_task_from_publication(pid: int, body: CreateTaskBody | None = None):
     if not pub:
         raise HTTPException(404, "publication not found")
     plan = (body.plan if body and body.plan else pub.get("analysis")) or {}
+    if pub.get("answered_by_version"):
+        vnum = pub.get("answer_version_number")
+        raise HTTPException(
+            400,
+            "по этому комментарию уже выпущена версия"
+            + (f" v{int(vnum):03d}" if vnum else "")
+            + " — продолжение не требуется",
+        )
     if not plan.get("needs_task", True):
         raise HTTPException(400, "AI says no task is needed")
     client = _synx()
     project = _project_for(client, project_id=pub["project_id"])
     task_types = client.task_types(project["id"])
     task_type = plan.get("task_type") or "prod_gen"
+    if isinstance(task_type, dict):
+        task_type = task_type.get("code") or task_type.get("name") or task_type.get("id") or "prod_gen"
+    task_type = str(task_type)
     if task_types and task_type not in task_types:
         task_type = "prod_gen" if "prod_gen" in task_types else task_types[0]
     task_name = re.sub(r"[^a-zA-Z0-9_]+", "_", str(plan.get("task_name") or "robot_task")).strip("_")[:48] or "robot_task"
@@ -399,6 +444,75 @@ def create_task_from_publication(pid: int, body: CreateTaskBody | None = None):
     })
     db.update_publication(pid, status="task_created")
     return {"ok": True, "task": db.get_task(tid), "synx_task": synx_task}
+
+
+@app.get("/api/mcp/servers")
+def mcp_servers():
+    return {"servers": mcp_manager.load_servers()}
+
+
+@app.post("/api/mcp/servers")
+def mcp_server_add(body: MCPServerBody):
+    return {"server": mcp_manager.add_server(body.server)}
+
+
+@app.delete("/api/mcp/servers/{server_id}")
+def mcp_server_remove(server_id: str, delete_files: bool = False):
+    mcp_manager.remove_server(server_id, delete_files)
+    return {"ok": True}
+
+
+@app.post("/api/mcp/search")
+def mcp_search(body: dict[str, Any]):
+    try:
+        return {"results": mcp_manager.search(body.get("query") or "", int(body.get("limit") or 20))}
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.post("/api/mcp/install")
+def mcp_install(body: MCPInstallBody):
+    try:
+        return {"server": mcp_manager.install(body.url, body.name)}
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.get("/api/filesystem/roots")
+def fs_roots():
+    return {"roots": fs_tools.roots()}
+
+
+@app.put("/api/filesystem/roots")
+def fs_roots_set(body: RootsBody):
+    cfg = load_config()
+    cfg.setdefault("filesystem", {})["roots"] = body.roots
+    save_config(cfg)
+    return {"roots": fs_tools.roots()}
+
+
+@app.post("/api/filesystem/roots")
+def fs_root_add(body: RootAddBody):
+    try:
+        return {"roots": fs_tools.add_root(body.path)}
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.delete("/api/filesystem/roots")
+def fs_root_remove(path: str):
+    return {"roots": fs_tools.remove_root(path)}
+
+
+@app.get("/api/fs/file")
+def fs_file(path: str):
+    try:
+        p = fs_tools.resolve(path)
+        if not p.is_file():
+            raise FileNotFoundError(path)
+        return FileResponse(p)
+    except Exception as exc:
+        raise HTTPException(404, str(exc))
 
 
 @app.get("/api/chat/sessions")

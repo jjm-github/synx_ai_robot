@@ -26,7 +26,7 @@ def task_work_dir(cfg: dict[str, Any], project_alias: str, shot: str,
                   sequence: str, task_type: str, bot: str,
                   task_name: str, version: int) -> Path:
     base = shot_dir(cfg, project_alias, shot, sequence)
-    return (base / _safe(task_type) / "work" / _safe(bot) /
+    return (base / _safe(task_type).lower() / "work" / _safe(bot) /
             f"{_safe(task_name)}_v{int(version):03d}")
 
 

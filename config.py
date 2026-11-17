@@ -47,6 +47,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "vae_wan": "wan2.2_vae.safetensors",
         },
     },
+    "filesystem": {
+        "roots": ["/mnt/projects"],
+    },
     "paths": {
         "projects_root": "/mnt/projects",
         "layouts": {

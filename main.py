@@ -45,6 +45,21 @@ class DesktopApi:
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
+    def pick_folder(self):
+        try:
+            import webview
+            window = webview.windows[0] if webview.windows else None
+            if not window:
+                return {"ok": False, "error": "no window"}
+            path = window.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=False)
+            if not path:
+                return {"ok": False, "cancelled": True}
+            if isinstance(path, (list, tuple)):
+                path = path[0]
+            return {"ok": True, "path": str(path)}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
     def open_url(self, url: str):
         try:
             import webbrowser

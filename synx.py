@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import threading
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable
@@ -12,6 +13,35 @@ import requests
 requests.packages.urllib3.disable_warnings()
 
 BOT_LIKE_AUTHORS = {"p.robot", "review-service", "client-review"}
+
+
+def _parse_dt(value: object):
+    try:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return None
+
+
+def _is_version_note(comment: dict[str, Any], version: dict[str, Any] | None) -> bool:
+    if not version:
+        return False
+    cdt = _parse_dt(comment.get("created_at"))
+    vdt = _parse_dt(version.get("created_at"))
+    if not cdt or not vdt or abs((cdt - vdt).total_seconds()) > 10:
+        return False
+    cbody = (comment.get("body") or "").strip()
+    vbody = (version.get("comment") or "").strip()
+    if cbody and vbody and cbody == vbody:
+        return True
+    # The publisher usually adds the version text and attachment comments within
+    # a few seconds of publishing. Those are publication notes, not requests.
+    return bool(comment.get("author") and comment.get("author") == version.get("author"))
 
 
 class SynxError(RuntimeError):
@@ -66,7 +96,16 @@ class SynxClient:
 
     def task_types(self, project_id: str) -> list[str]:
         try:
-            return self._get(f"/api/projects/{project_id}/task_types")["task_types"]
+            raw = self._get(f"/api/projects/{project_id}/task_types")["task_types"]
+            out = []
+            for x in raw:
+                if isinstance(x, str):
+                    out.append(x)
+                elif isinstance(x, dict):
+                    code = x.get("code") or x.get("name") or x.get("id")
+                    if code:
+                        out.append(str(code))
+            return out
         except Exception:
             return []
 
@@ -182,6 +221,30 @@ class SynxClient:
                         cs = []
                     for c in cs:
                         out.append(self._pub(project, ent, c, "task", None, t))
+            version_times = []
+            for v in versions:
+                dt = _parse_dt(v.get("created_at"))
+                if dt:
+                    version_times.append((dt, v))
+            version_times.sort(key=lambda x: x[0])
+            for rec in out:
+                cdt = _parse_dt(rec.get("created_at"))
+                if not cdt:
+                    continue
+                note = _is_version_note({"body": rec.get("body"), "created_at": rec.get("created_at"),
+                                         "author": rec.get("author")},
+                                        next((v for v in versions if v.get("id") == rec.get("version_id")), None))
+                if note:
+                    continue
+                candidates = [(dt, v) for dt, v in version_times if dt > cdt]
+                if rec.get("thread_kind") == "task":
+                    candidates = [(dt, v) for dt, v in candidates
+                                  if v.get("task_id") == rec.get("task_id")]
+                if candidates:
+                    _, answer = min(candidates, key=lambda x: x[0])
+                    rec["answered_by_version"] = 1
+                    rec["answer_version_number"] = answer.get("version_number")
+                    rec["answer_version_code"] = answer.get("version_code")
             return out
 
         with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
@@ -227,6 +290,9 @@ class SynxClient:
             "created_at": comment.get("created_at"),
             "attachments": attachments,
             "status": "new",
+            "answered_by_version": 0,
+            "answer_version_number": None,
+            "answer_version_code": None,
         }
 
 

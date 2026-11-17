@@ -5,7 +5,7 @@ import re
 from typing import Any
 
 ACTION_RE = re.compile(
-    r"(надо|нужно|требует|исправ|передел|перерис|измен|поправ|замен|убрать|удали|"
+    r"(надо|нужн|требует|исправ|передел|перерис|измен|поправ|замен|убрать|удали|"
     r"добав|сделай|сделать|переген|не так|не тот|не та|не те|плохо|ошиб|брак|"
     r"верни|усилить|ослабить|подправ|fix|change|redo|update|replace|remove|add|"
     r"wrong|bad|fix|make|adjust|improve|regenerate)",
@@ -48,6 +48,13 @@ def classify_publication(pub: dict[str, Any]) -> dict[str, Any]:
     author = str(pub.get("author") or "")
     thread = str(pub.get("thread_kind") or "")
     atts = _attachments(pub)
+    if pub.get("answered_by_version"):
+        vnum = pub.get("answer_version_number")
+        vcode = pub.get("answer_version_code") or (f"v{int(vnum):03d}" if vnum else "")
+        return {"needs_action": 0, "publication_type": "version",
+                "source": "reply",
+                "reason": "по комментарию уже выпущена версия" + (f" {vcode}" if vcode else "")}
+
     analysis = pub.get("analysis")
     if isinstance(analysis, str):
         try:
