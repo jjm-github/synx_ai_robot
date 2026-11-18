@@ -191,6 +191,9 @@ def run(project: str, locations: list[str], views: int = 9,
 def start(project: str, locations: list[str] | None, views: int = 9,
           bot: str = "a.smirnov") -> dict[str, Any]:
     """Spawn the batch in a detached process and return its status info."""
+    running = is_running()
+    if running:
+        return {**running, "already_running": True}
     args = [sys.executable, str(ROOT / "passport_batch.py"),
             "--project", project, "--views", str(views), "--bot", bot]
     locs = locations or ["all"]
@@ -246,6 +249,9 @@ def start_via_pipeline(project: str, locations: list[str] | None = None,
         all_locs = [e for e in all_locs if str(e.get("name")).lower() in wanted]
     if not all_locs:
         raise ValueError("no locations to process")
+    running = is_running()
+    if running:
+        return {"already_running": True, **running}
 
     ids = []
     for e in all_locs:
