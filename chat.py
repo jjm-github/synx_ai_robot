@@ -1413,12 +1413,41 @@ def _entity_create_request(text: str) -> dict[str, Any] | None:
             "info": m_desc.group(1).strip() if m_desc else ""}
 
 
+def _passport_batch_request(text: str, session_id: str = "default") -> dict[str, Any] | None:
+    """«Паспорта всех локаций: 9 видов + превью, 10 страниц» — background batch."""
+    low = (text or "").lower()
+    if "паспорт" not in low:
+        return None
+    if not re.search(r"(\b9\b|девять|10\s*страниц|десять\s*страниц|превью|\d+\s*вид)", low):
+        return None
+    project = _project_from_text(text)
+    if not project:
+        focus = db.get_chat_focus(session_id) or {}
+        project = focus.get("project") or "test_proekt_vfx"
+    views = 9
+    m = re.search(r"(\d{1,2})\s*вид", low)
+    if m:
+        views = max(1, min(12, int(m.group(1))))
+    bot = "a.smirnov"
+    try:
+        from config import load_bots
+        for b in load_bots():
+            login = str(b.get("login") or "")
+            if login and login.lower() in low:
+                bot = login
+                break
+    except Exception:
+        pass
+    return {"project": project, "locations": ["all"], "views": views, "bot": bot}
+
+
 def _pdf_remix_request(text: str) -> dict[str, Any] | None:
     low = (text or "").lower()
     # Text deliverables are handled by make_text_pdf / publish_text_document,
     # not by the frame-layout remix pipeline.
     if re.search(r"(из\s+текста|текстов(?:ый|ого|ом)\s+pdf|markdown|\.md\b|"
-                 r"документ|сценари|план[ае]?\s+сери)", low):
+                 r"документ|сценари|план[ае]?\s+сери|паспорт|превью|"
+                 r"\d+\s*вид)", low):
         return None
     has_pdf = bool(re.search(r"(pdf|пдф)", low, re.I))
     layout = any(k in low for k in ("черн", "чёрн", "dpi", "текст", "центр", "поля",
@@ -2747,6 +2776,33 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
                            f"- Ссылка: {result.get('url')}")
         except Exception as exc:
             content = f"Не удалось создать сущность: {exc}"
+        emit({"type": "stage", "text": "Готово"})
+        db.add_chat_message(session_id, "assistant", content, generated=[],
+                            usage=usage, playlist_text=None, progress=stages)
+        return {"messages": db.list_chat_messages(session_id), "usage": usage,
+                "generated": [], "playlist_text": None, "stages": stages}
+
+    # Location passport batch: 9 views + 1 preview page = 10-page A3 PDF per
+    # location, published as a new version. Runs in the background.
+    passport_req = _passport_batch_request(text or "", session_id)
+    if passport_req:
+        try:
+            emit({"type": "stage", "text": "Запускаю батч паспортов локаций..."})
+            status = passport_batch.start(
+                passport_req["project"], passport_req["locations"],
+                passport_req["views"], passport_req["bot"])
+            content = (
+                f"Запущено. Паспорта всех локаций: {passport_req['views']} видов + "
+                f"превью (10 страниц A3), публикация версиями Concept/location_develop "
+                f"от {passport_req['bot']}.\n\n"
+                f"- Проект: **{passport_req['project']}**\n"
+                f"- PID: `{status.get('pid')}`\n"
+                f"- Статус: `{status.get('status_file')}`\n"
+                f"- Лог: `{status.get('log')}`\n\n"
+                "Работает в фоне (~3 минуты на локацию). Ссылки появятся в статусе "
+                "по мере публикации.")
+        except Exception as exc:
+            content = f"Не удалось запустить батч паспортов: {exc}"
         emit({"type": "stage", "text": "Готово"})
         db.add_chat_message(session_id, "assistant", content, generated=[],
                             usage=usage, playlist_text=None, progress=stages)
