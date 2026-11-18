@@ -135,6 +135,15 @@ def init() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_chat_session ON chat_messages(session_id, id);
 
+            CREATE TABLE IF NOT EXISTS chat_focus (
+                session_id TEXT PRIMARY KEY,
+                project TEXT,
+                shot TEXT,
+                version TEXT,
+                last_text TEXT,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS project_views (
                 session_id TEXT NOT NULL DEFAULT 'default',
                 project_id TEXT NOT NULL,
@@ -190,6 +199,36 @@ def execute(sql: str, params: Iterable[Any] = ()) -> int:
         cur = c.execute(sql, tuple(params))
         c.commit()
         return int(cur.lastrowid or 0)
+
+
+def set_chat_focus(session_id: str, project: str | None = None,
+                   shot: str | None = None, version: str | None = None,
+                   last_text: str | None = None) -> dict[str, Any]:
+    """Store the entity the current chat is working on (avoids stale targets)."""
+    prev = get_chat_focus(session_id) or {}
+    row = {
+        "project": project or prev.get("project"),
+        "shot": shot or prev.get("shot"),
+        "version": version or prev.get("version"),
+    }
+    with connect() as c:
+        c.execute(
+            """INSERT INTO chat_focus (session_id, project, shot, version, last_text, updated_at)
+               VALUES (?,?,?,?,?,?)
+               ON CONFLICT(session_id) DO UPDATE SET
+                 project=excluded.project, shot=excluded.shot,
+                 version=excluded.version, last_text=excluded.last_text,
+                 updated_at=excluded.updated_at""",
+            (session_id, row["project"], row["shot"], row["version"],
+             (last_text or "")[:20000], now()))
+        c.commit()
+    return row
+
+
+def get_chat_focus(session_id: str) -> dict[str, Any] | None:
+    with connect() as c:
+        r = c.execute("SELECT * FROM chat_focus WHERE session_id=?", (session_id,)).fetchone()
+        return row_to_dict(r)
 
 
 def add_publication(pub: dict[str, Any]) -> int | None:

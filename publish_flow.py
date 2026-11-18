@@ -251,10 +251,14 @@ def _workflow_for_item(item: dict[str, Any], ref_name: str, cfg: dict[str, Any],
 
 def _infer_target(session_id: str, project: str | None, shot: str | None,
                   version: str | None) -> tuple[str, str, str | None]:
+    focus = db.get_chat_focus(session_id) or {}
     if shot:
-        return (project or "", shot, version)
+        return (project or focus.get("project") or "", shot, version)
+    if focus.get("shot"):
+        return (project or focus.get("project") or "", focus["shot"],
+                version or focus.get("version"))
     rows = db.all(
-        "SELECT content FROM chat_messages WHERE session_id=? ORDER BY id DESC LIMIT 30",
+        "SELECT content FROM chat_messages WHERE session_id=? ORDER BY id DESC LIMIT 4",
         (session_id,))
     text = "\n".join(str(r.get("content") or "") for r in rows)
     m_shot = re.search(r"\b([A-Za-z][A-Za-z0-9_]*_\d{3,5})\b", text)

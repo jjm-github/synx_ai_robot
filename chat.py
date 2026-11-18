@@ -113,6 +113,17 @@ PDF на стандартных страницах, проверит его и �
 достаточно — переходи к генерации или отвечай текстом. Для списков версий
 используй shot/version фильтры и limit не больше 50.
 
+## Фокус и публикация
+
+- Работай только с тем шотом/версией, который назван в текущем сообщении или
+  в блоке «Текущий фокус». Не переноси шоты и версии из предыдущих сообщений.
+- Упоминание версии (`p002_0410_art_v002`, «версия 13») — это референс для
+  работы, а НЕ разрешение публиковать.
+- Публикуй версию только по явной просьбе: «опубликуй», «сделай версию»,
+  «запушь», «выложи». Если просьбы нет — собери и покажи результат.
+- Перед публикацией сверь project/shot/version с текущим фокусом. Если они
+  расходятся — остановись и уточни, а не публикуй другой шот.
+
 ## Веб-поиск и LoRA
 
 Интернет-поиск — стандартный навык. Любой информационный вопрос про ComfyUI,
@@ -1043,12 +1054,23 @@ def _entity_create_request(text: str) -> dict[str, Any] | None:
 
 def _pdf_remix_request(text: str) -> dict[str, Any] | None:
     low = (text or "").lower()
-    if not re.search(r"(pdf|пдф)", low, re.I):
+    has_pdf = bool(re.search(r"(pdf|пдф)", low, re.I))
+    layout = any(k in low for k in ("черн", "чёрн", "dpi", "текст", "центр", "поля",
+                                    "кадр", "страниц", "лист", "верси"))
+    action = any(k in low for k in ("сделай", "собери", "исправ", "передел",
+                                    "опубликуй", "сделать", "получаю"))
+    if not layout or not action:
         return None
-    if not any(k in low for k in ("черн", "dpi", "текст", "центр", "поля", "кадр", "страниц", "верси")):
-        return None
-    if not any(k in low for k in ("сделай", "собери", "исправ", "передел", "опубликуй", "сделать")):
-        return None
+    if not has_pdf:
+        # Version/layout edits without the word "pdf": require a strong page
+        # layout signal and a version reference, and never steal workflow or
+        # image-generation requests.
+        if re.search(r"(воркфлоу|workflow|сгенерир|генерац|нарисуй)", low, re.I):
+            return None
+        strong = any(k in low for k in ("черн", "чёрн", "dpi", "текст", "центр",
+                                        "поля", "кадр", "страниц", "лист"))
+        if not strong or not re.search(r"(верси|\bv\d{1,3}\b)", low, re.I):
+            return None
     base_version = None
     patterns = (
         r"относительно\s+(?:верси[июя]?\s*)?v?(\d{1,3})",
@@ -1063,11 +1085,16 @@ def _pdf_remix_request(text: str) -> dict[str, Any] | None:
             base_version = f"v{int(m.group(1)):03d}"
             break
     if not base_version:
-        m = re.search(r"верси[юия]?\s*(?:v)?(\d{1,3})", low)
-        if not m:
-            m = re.search(r"\bv(\d{1,3})\b", low)
-        if m:
+        for m in re.finditer(r"верси[юия]?\s*(?:v)?(\d{1,3})", low):
+            before = low[max(0, m.start() - 20):m.start()]
+            if re.search(r"(сделай|создай|опубликуй|нужна|нужна\s+новая)\s*$", before):
+                continue
             base_version = f"v{int(m.group(1)):03d}"
+            break
+        if not base_version:
+            m = re.search(r"\bv(\d{1,3})\b", low)
+            if m:
+                base_version = f"v{int(m.group(1)):03d}"
     dpi = 300
     m = re.search(r"(\d{2,4})\s*dpi", low)
     if m:
@@ -1076,7 +1103,7 @@ def _pdf_remix_request(text: str) -> dict[str, Any] | None:
     m = re.search(r"на\s*(\d{1,2})\s*%\s*(?:меньше|меньше\s+на)?", low)
     if m:
         text_scale = max(0.4, 1.0 - int(m.group(1)) / 100.0)
-    elif "текст" in low and "меньше" in low:
+    elif "текст" in low and ("меньше" in low or "мельче" in low):
         text_scale = 0.8
     image_valign = "center" if any(k in low for k in (
         "по-вертикали", "по вертикали", "по центру", "середине", "строго по середине")) else "top"
@@ -1089,12 +1116,16 @@ def _pdf_remix_request(text: str) -> dict[str, Any] | None:
             "background": "#000000"}
 
 
-def _remix_task() -> dict[str, Any] | None:
-    tasks = db.list_tasks(limit=100)
+def _remix_task(shot: str | None = None) -> dict[str, Any] | None:
+    tasks = db.list_tasks(limit=200)
+    if shot:
+        tasks = [t for t in tasks if str(t.get("shot") or "").lower() == shot.lower()]
     for t in tasks:
         wd = Path(str(t.get("work_dir") or ""))
         if wd.is_dir() and list(wd.glob("frame_*.png")):
-            if str(t.get("task_name") or "") in ("frames_pdf", "cubism_frames") or str(t.get("shot") or "") == "p002_0130":
+            if str(t.get("task_name") or "") in ("frames_pdf", "cubism_frames",
+                                                 "frames_pdf_fix", "frames_pdf_a4") \
+                    or str(t.get("shot") or "") == "p002_0130":
                 return t
     for t in tasks:
         wd = Path(str(t.get("work_dir") or ""))
@@ -1180,6 +1211,41 @@ def _guess_bot(text: str) -> str | None:
     except Exception:
         pass
     return None
+
+
+def _workflow_ref_request(text: str, session_id: str = "default") -> dict[str, Any] | None:
+    """"Build a workflow from version X" — resolve it, never publish blindly."""
+    t = text or ""
+    if not re.search(r"(воркфлоу|workflow)", t, re.I):
+        return None
+    if not re.search(r"(возьми|бер[её]м|за основу|на основе|используй|рендер|render)", t, re.I):
+        return None
+    m = FOCUS_CODE_RE.search(t)
+    if m:
+        shot = m.group(1).lower()
+        version = "v" + str(int(m.group(3))).zfill(3)
+    else:
+        m = FOCUS_SHOT_RE.search(t)
+        if not m:
+            return None
+        shot = m.group(1).lower()
+        version = ("v" + str(int(m.group(2))).zfill(3)) if m.group(2) else None
+    project = _project_from_text(t)
+    if not project:
+        focus = db.get_chat_focus(session_id) or {}
+        project = focus.get("project") or ""
+    return {"project": project, "shot": shot, "version": version}
+
+
+def _comfy_alive() -> bool:
+    try:
+        base = str(load_config().get("comfy", {}).get("base_url") or "")
+        if not base:
+            return False
+        r = requests.get(base.rstrip("/") + "/system_stats", timeout=3)
+        return r.status_code < 400
+    except Exception:
+        return False
 
 
 def _version_request(text: str) -> dict[str, Any] | None:
@@ -1337,20 +1403,110 @@ def _image_content(images: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _history_messages(session_id: str) -> list[dict[str, Any]]:
-    rows = db.list_chat_messages(session_id, limit=40)
+    # Short window: long PDF/chat histories made the model reuse old shots and
+    # versions instead of the one named in the current request.
+    rows = db.list_chat_messages(session_id, limit=16)
+    # On an explicit shot/version switch keep only messages from that point:
+    # otherwise old shots and old PDF experiments leak into the new task.
+    cut = 0
+    for i, r in enumerate(rows):
+        if r.get("role") == "user":
+            body = r.get("content") or ""
+            if FOCUS_CODE_RE.search(body) or FOCUS_SHOT_RE.search(body):
+                cut = i
+    rows = rows[cut:]
     out = [{"role": "system", "content": _system()}]
+    focus = db.get_chat_focus(session_id)
+    if focus and (focus.get("shot") or focus.get("project")):
+        out.append({"role": "system", "content": (
+            "## Текущий фокус\n"
+            f"- project: {focus.get('project') or '—'}\n"
+            f"- shot: {focus.get('shot') or '—'}\n"
+            f"- version: {focus.get('version') or '—'}\n"
+            "Работай только с этим шотом, пока пользователь явно не назовёт другой. "
+            "Упоминание версии — референс, а не разрешение публиковать.")})
     ctx = db.get_chat_context(session_id)
     if ctx:
         out.append({"role": "system",
                     "content": "## Импортированный контекст предыдущего чата\n\n" + ctx[:120000]})
-    for r in rows:
-        if r.get("role") == "user" and r.get("images"):
-            content: list[dict[str, Any]] = [{"type": "text", "text": r.get("content") or ""}]
+    with_images = [i for i, r in enumerate(rows) if r.get("images")]
+    keep_images = set(with_images[-2:])
+    for i, r in enumerate(rows):
+        text_body = (r.get("content") or "")[:12000]
+        if r.get("role") == "user" and r.get("images") and i in keep_images:
+            content: list[dict[str, Any]] = [{"type": "text", "text": text_body}]
             content.extend(_image_content(r["images"]))
             out.append({"role": "user", "content": content})
         else:
-            out.append({"role": r.get("role") or "assistant", "content": r.get("content") or ""})
+            out.append({"role": r.get("role") or "assistant", "content": text_body})
     return out
+
+
+FOCUS_CODE_RE = re.compile(
+    r"\b((?:[a-z]{1,4}\d{2,4}[a-z]?|\d{2,4}[a-z])_\d{3,5})_([a-z][a-z0-9]*)_v(\d{1,4})\b", re.I)
+FOCUS_SHOT_RE = re.compile(
+    r"\b((?:[a-z]{1,4}\d{2,4}[a-z]?|\d{2,4}[a-z])_\d{3,5})(?:_v(\d{1,4}))?\b", re.I)
+FOCUS_VERSION_RE = re.compile(r"\b(?:верси[яию]|version)\s*v?(\d{1,4})\b", re.I)
+PROJECT_HINTS = {
+    "либерия": "liberia", "liberia": "liberia",
+    "колоссус": "colossus", "colossus": "colossus",
+}
+
+
+def _project_from_text(text: str) -> str | None:
+    low = (text or "").lower()
+    try:
+        for alias in load_config().get("synx", {}).get("projects") or []:
+            if str(alias).lower() in low:
+                return str(alias)
+    except Exception:
+        pass
+    for hint, alias in PROJECT_HINTS.items():
+        if hint in low:
+            return alias
+    return None
+
+
+def _update_focus(session_id: str, text: str) -> dict[str, Any]:
+    """Remember the shot/version named in the current message."""
+    t = text or ""
+    project = _project_from_text(t)
+    shot = None
+    version = None
+    m = FOCUS_CODE_RE.search(t)
+    if m:
+        shot = m.group(1).lower()
+        version = "v" + str(int(m.group(3))).zfill(3)
+    else:
+        m = FOCUS_SHOT_RE.search(t)
+        if m:
+            shot = m.group(1).lower()
+            if m.group(2):
+                version = "v" + str(int(m.group(2))).zfill(3)
+            else:
+                mv = re.search(r"\b(?:верси[яию]|version)\s*v?(\d{1,4})\b", t, re.I)
+                if mv:
+                    version = "v" + str(int(mv.group(1))).zfill(3)
+    if not version:
+        mv = FOCUS_VERSION_RE.search(t)
+        if mv:
+            version = "v" + str(int(mv.group(1))).zfill(3)
+    db.set_chat_focus(session_id, project=project or None, shot=shot,
+                      version=version, last_text=t)
+    return db.get_chat_focus(session_id) or {}
+
+
+PUBLISH_INTENT_RE = re.compile(
+    r"(опублику|публикуй|запуш|выложи|залей|publish|"
+    r"сделай\s+(?:новую\s+)?верси|создай\s+(?:новую\s+)?верси)", re.I)
+NO_PUBLISH_RE = re.compile(r"(не\s+публик|не\s+надо\s+публик|без\s+публикац)", re.I)
+
+
+def _publish_intent(text: str) -> bool:
+    low = (text or "").lower()
+    if NO_PUBLISH_RE.search(low):
+        return False
+    return bool(PUBLISH_INTENT_RE.search(low))
 
 
 def _mcp_text(result: dict[str, Any]) -> str:
@@ -1591,16 +1747,28 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
             bot_login=args.get("bot"), progress=progress)
         return result, [], None
     if name == "publish_daily_pdf":
+        focus = db.get_chat_focus(session_id or "default") or {}
+        if not _publish_intent(str(focus.get("last_text") or "")):
+            return {"error": "publish_not_requested",
+                    "message": ("Пользователь не просил публиковать версию. Собери PDF и "
+                                "покажи результат; публикуй только по явной команде.")}, [], None
+        fshot = str(focus.get("shot") or "")
         task_id = int(args.get("task_id") or 0)
         if not task_id:
             rows = db.list_tasks(limit=50)
             for t in rows:
+                if fshot and str(t.get("shot") or "") != fshot:
+                    continue
                 wd = Path(str(t.get("work_dir") or ""))
                 if wd.is_dir() and list(wd.glob("frame_*.png")):
                     task_id = int(t["id"]); break
         task = db.get_task(task_id)
         if not task:
             return {"error": f"task not found: {task_id}"}, [], None
+        if fshot and str(task.get("shot") or "") != fshot:
+            return {"error": "focus_mismatch",
+                    "message": (f"Задача относится к шоту {task.get('shot')}, а текущий "
+                                f"фокус — {fshot}. Не публикуй другой шот.")}, [], None
         work = Path(str(task.get("work_dir") or ""))
         images = sorted(work.glob("frame_*.png"))
         if not images:
@@ -1644,6 +1812,25 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
             progress=progress)
         return result, [], None
     if name == "publish_images_as_version":
+        focus = db.get_chat_focus(session_id or "default") or {}
+        if not _publish_intent(str(focus.get("last_text") or "")):
+            return {"error": "publish_not_requested",
+                    "message": ("Пользователь не просил публиковать версию. Собери PDF и "
+                                "покажи результат; публикуй только по явной команде "
+                                "«опубликуй», «сделай версию», «запушь».")}, [], None
+        fshot = str(focus.get("shot") or "")
+        if fshot:
+            args = dict(args)
+            requested = str(args.get("shot") or "")
+            if requested and requested.lower() != fshot.lower():
+                return {"error": "focus_mismatch",
+                        "message": (f"Текущий фокус — шот {fshot}, а выбран {requested}. "
+                                    "Не публикуй другой шот: перечитай запрос пользователя.")}, [], None
+            args.setdefault("shot", fshot)
+            if focus.get("project"):
+                args["project"] = focus["project"]
+            if focus.get("version") and not args.get("version"):
+                args["version"] = focus["version"]
         explicit = None
         if args.get("image_source") == "paths":
             explicit = [{"path": p} for p in (args.get("image_paths") or [])]
@@ -1826,6 +2013,7 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
 
     emit({"type": "stage", "text": "Анализирую запрос..."})
     db.add_chat_message(session_id, "user", text, images=images)
+    _update_focus(session_id, text or "")
     history = _history_messages(session_id)
     cfg = load_config()
     ai = AIClient(cfg)
@@ -1871,7 +2059,8 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
     remix = _pdf_remix_request(text or "")
     if remix:
         try:
-            task = _remix_task()
+            focus = db.get_chat_focus(session_id) or {}
+            task = _remix_task(str(focus.get("shot") or "") or None)
             if not task:
                 raise ValueError("не нашёл задачу с кадрами frame_*.png")
             items = _daily_items_from_task(task)
@@ -2021,6 +2210,44 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
                     f"- {u}" for u in research.get("sources", [])[:8]))
         except Exception as exc:
             content = f"Не удалось выполнить поиск в интернете: {exc}"
+        emit({"type": "stage", "text": "Готово"})
+        db.add_chat_message(session_id, "assistant", content, generated=[],
+                            usage=usage, playlist_text=None, progress=stages)
+        return {"messages": db.list_chat_messages(session_id), "usage": usage,
+                "generated": [], "playlist_text": None, "stages": stages}
+
+    # "Take version X as the basis and build a workflow" must resolve that
+    # exact version and must never publish a PDF for some older shot.
+    wf_req = _workflow_ref_request(text or "", session_id)
+    if wf_req:
+        content = ""
+        try:
+            emit({"type": "stage", "text": "Ищу версию и беру рендер за основу..."})
+            ref = synx_tools.prepare_reference(
+                wf_req["project"], wf_req["shot"], wf_req.get("version"), "middle")
+            info = ref.get("version") or {}
+            comfy = _comfy_alive()
+            lines = [
+                f"Взял за основу **{info.get('project') or wf_req['project']}/"
+                f"{info.get('shot') or wf_req['shot']} "
+                f"{info.get('version') or wf_req.get('version') or ''}**.",
+                "",
+                f"- Референс-кадр: `{ref.get('path')}` "
+                f"({ref.get('width')}×{ref.get('height')})",
+                "- Версия и файл проверены в synx, ничего не публиковал.",
+            ]
+            if comfy:
+                lines += ["", "ComfyUI доступен. В текущих профилях нет OpenPose/ControlNet — "
+                          "могу собрать pose-воркфлоу через MCP (`create_workflow`) и добавить "
+                          "ControlNet-ноды, но это отдельная сборка. Подтверди — и я начну."]
+            else:
+                lines += ["", "**ComfyUI не запущен** на `127.0.0.1:8199`, поэтому воркфлоу "
+                          "и первые кадры сейчас не собрать. Запусти ComfyUI и повтори запрос — "
+                          "возьму этот же референс."]
+            content = "\n".join(lines)
+        except Exception as exc:
+            content = (f"Не смог подготовить референс по версии "
+                       f"{wf_req.get('shot')} {wf_req.get('version') or ''}: {exc}")
         emit({"type": "stage", "text": "Готово"})
         db.add_chat_message(session_id, "assistant", content, generated=[],
                             usage=usage, playlist_text=None, progress=stages)
