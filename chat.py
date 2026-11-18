@@ -22,6 +22,7 @@ import mcp_manager
 import mcp_runtime
 import passport_batch
 import pdf_cache
+import pipeline_queue
 import publish_flow
 import synx_tools
 import script_tools
@@ -160,8 +161,13 @@ PDF на стандартных страницах, проверит его и �
   ассеты, что создал робот»). Сначала найди и покажи список (id, имя, тип,
   версии/задачи), затем вызывай `synx_delete_entity`. Непустые сущности
   (с версиями/задачами) удаляй только с `force=true` после явного подтверждения.
-- «Просчитай все локации/шоты через конвейер» = создай по задаче на каждую
-  сущность и запусти конвейер, не спрашивая подтверждения.
+- ЛЮБАЯ производственная работа из чата (генерация, серия кадров, задачи на
+  локации/объекты) идёт через конвейер: `queue_generation_tasks` создаёт
+  видимые задачи, запускает очередь и возвращает ID. Не генерируй серии инлайн.
+- После постановки обязательно сообщай: сколько задач создано, их ID, проект,
+  сущности и где смотреть (раздел «Задачи», статус конвейера). Без вопросов.
+- «Просчитай все локации/шоты через конвейер» = `queue_generation_tasks`
+  с `entities=["all_locations"]` и запуском, не спрашивая подтверждения.
 - «По 9 видов + 1 превью на локацию» / «паспорт 10 страниц» = запусти
   `start_passport_batch` (project, locations=all, views=9). Он в фоне генерирует
   9 ракурсов, собирает контактный лист первой страницей и публикует 10-страничный
@@ -908,6 +914,23 @@ TEXT_DOC_TOOLS = [
             "page_size": {"type": "string", "enum": ["A4", "A3", "LETTER"], "default": "A4"},
             "font_size": {"type": "number", "default": 10.5},
         }, "required": ["text"]},
+    }},
+    {"type": "function", "function": {
+        "name": "queue_generation_tasks",
+        "description": ("Create visible pipeline tasks for generation (one per entity) and start "
+                        "the pipeline. Use for ANY production work from chat instead of inline "
+                        "generation; always report created task IDs to the user."),
+        "parameters": {"type": "object", "properties": {
+            "project": {"type": "string"},
+            "entities": {"type": "array", "items": {"type": "string"},
+                         "description": "Entity names; use [\"all_locations\"] for every location"},
+            "prompt": {"type": "string", "description": "Base prompt; {entity} is replaced"},
+            "negative": {"type": "string"},
+            "task_name": {"type": "string", "default": "chat_generation"},
+            "task_type": {"type": "string", "default": "Art"},
+            "bot": {"type": "string"},
+            "start": {"type": "boolean", "default": True},
+        }, "required": ["project", "entities"]},
     }},
     {"type": "function", "function": {
         "name": "start_passport_batch",
@@ -2410,6 +2433,27 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
                 page_size=args.get("page_size") or "A4",
                 font_size=float(args.get("font_size") or 10.5))
             return info, [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
+    if name == "queue_generation_tasks":
+        try:
+            project = args.get("project") or ""
+            ents = list(args.get("entities") or [])
+            if ents == ["all_locations"] or args.get("all_locations"):
+                ents = pipeline_queue.locations(project)
+            if not ents:
+                return {"error": "entities is empty"}, [], None
+            base = args.get("prompt") or "Concept art of {entity}"
+            result = pipeline_queue.queue_many(
+                project, ents,
+                lambda n: base.replace("{entity}", n) if "{entity}" in base
+                else f"{base} ({n})",
+                negative=args.get("negative") or "",
+                task_name=args.get("task_name") or "chat_generation",
+                task_type=args.get("task_type") or "Art",
+                bot_login=args.get("bot"),
+                start=bool(args.get("start", True)))
+            return result, [], None
         except Exception as exc:
             return {"error": str(exc)}, [], None
     if name == "start_passport_batch":
