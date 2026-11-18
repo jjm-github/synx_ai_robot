@@ -55,7 +55,8 @@ def publish_pdf_as_version(project: str, entity: str, pdf_path: str | Path, *,
                            task_type: str | None = None,
                            bot_login: str | None = None,
                            comment: str = "",
-                           progress: Callable[[dict[str, Any]], None] | None = None
+                           progress: Callable[[dict[str, Any]], None] | None = None,
+                           record_db: bool = True
                            ) -> dict[str, Any]:
     """Publish an existing PDF (raster or vector) as a version of ANY entity.
 
@@ -153,8 +154,9 @@ def publish_pdf_as_version(project: str, entity: str, pdf_path: str | Path, *,
     except Exception:
         pass
 
-    tid = db.create_task({
-        "publication_id": None, "synx_task_id": task_id, "project_id": proj["id"],
+    tid = None
+    if record_db:
+        tid = db.create_task({"publication_id": None, "synx_task_id": task_id, "project_id": proj["id"],
         "entity_id": ent["id"], "shot": entity_name, "task_name": name,
         "task_type": requested_type, "bot": bot_name, "status": "done",
         "stage": "published", "progress": 100, "prompt": pdf.name,
@@ -164,8 +166,8 @@ def publish_pdf_as_version(project: str, entity: str, pdf_path: str | Path, *,
                                    "entity_kind": entity_kind}, ensure_ascii=False),
         "work_dir": str(work), "render_dir": str(render), "result_file": str(dst),
         "version_id": v.get("id"), "version_code": vcode, "synx_url": url, "priority": 0,
-    })
-    db.add_event(tid, "published", f"PDF version {vcode}: {url or dst}")
+        })
+        db.add_event(tid, "published", f"PDF version {vcode}: {url or dst}")
     return {"ok": True, "project": alias, "entity": entity_name, "kind": entity_kind,
             "version_code": vcode, "version_id": v.get("id"), "url": url,
             "media_kind": media.get("kind"), "pdf": str(dst), "pdf_info": check,

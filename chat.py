@@ -911,7 +911,7 @@ TEXT_DOC_TOOLS = [
     }},
     {"type": "function", "function": {
         "name": "start_passport_batch",
-        "description": ("Start a background batch of location passports: 9 views + 1 preview "
+        "description": ("Queue visible pipeline tasks for location passports: 9 views + 1 preview "
                         "page = 10-page A3 PDF per location, published as a new version. "
                         "Use for «по 9 видов + превью для всех локаций» — no extra questions."),
         "parameters": {"type": "object", "properties": {
@@ -2414,7 +2414,10 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
             return {"error": str(exc)}, [], None
     if name == "start_passport_batch":
         try:
-            return passport_batch.start(
+            running = passport_batch.is_running()
+            if running:
+                return {"already_running": True, **running}, [], None
+            return passport_batch.start_via_pipeline(
                 args.get("project") or "", list(args.get("locations") or ["all"]),
                 int(args.get("views") or 9), args.get("bot") or "a.smirnov"), [], None
         except Exception as exc:
@@ -2787,20 +2790,25 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
     passport_req = _passport_batch_request(text or "", session_id)
     if passport_req:
         try:
-            emit({"type": "stage", "text": "Запускаю батч паспортов локаций..."})
-            status = passport_batch.start(
-                passport_req["project"], passport_req["locations"],
-                passport_req["views"], passport_req["bot"])
-            content = (
-                f"Запущено. Паспорта всех локаций: {passport_req['views']} видов + "
-                f"превью (10 страниц A3), публикация версиями Concept/location_develop "
-                f"от {passport_req['bot']}.\n\n"
-                f"- Проект: **{passport_req['project']}**\n"
-                f"- PID: `{status.get('pid')}`\n"
-                f"- Статус: `{status.get('status_file')}`\n"
-                f"- Лог: `{status.get('log')}`\n\n"
-                "Работает в фоне (~3 минуты на локацию). Ссылки появятся в статусе "
-                "по мере публикации.")
+            running = passport_batch.is_running()
+            if running:
+                content = (f"Батч паспортов уже идёт (PID `{running.get('pid')}`), "
+                           f"статус: `{running.get('status_file')}`. Дождусь завершения "
+                           "и не запускаю второй.")
+            else:
+                emit({"type": "stage", "text": "Ставлю задачи паспортов в конвейер..."})
+                status = passport_batch.start_via_pipeline(
+                    passport_req["project"], passport_req["locations"],
+                    passport_req["views"], passport_req["bot"])
+                content = (
+                    f"Запущено через конвейер: {status.get('queued')} задач "
+                    f"`location_passport` (по {passport_req['views']} видов + превью, "
+                    f"10 страниц A3). Публикация версиями Concept/location_develop "
+                    f"от {passport_req['bot']}.\n\n"
+                    f"- Проект: **{passport_req['project']}**\n"
+                    f"- Задачи: `{status.get('task_ids')}`\n"
+                    f"- Очередь: {status.get('pipeline', {}).get('queue')}\n\n"
+                    "Прогресс виден в разделе «Задачи» и в статусе конвейера.")
         except Exception as exc:
             content = f"Не удалось запустить батч паспортов: {exc}"
         emit({"type": "stage", "text": "Готово"})

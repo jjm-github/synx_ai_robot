@@ -208,6 +208,85 @@ def start(project: str, locations: list[str] | None, views: int = 9,
     return status
 
 
+def is_running() -> dict[str, Any] | None:
+    """Return the running batch status, if any."""
+    try:
+        st = json.loads(STATUS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    pid = int(st.get("pid") or 0)
+    if not pid:
+        return None
+    try:
+        os.kill(pid, 0)
+        return st
+    except Exception:
+        return None
+
+
+def start_via_pipeline(project: str, locations: list[str] | None = None,
+                       views: int = 9, bot: str = "a.smirnov",
+                       start_manager: bool = True) -> dict[str, Any]:
+    """Queue one visible pipeline task per location (9 views + preview)."""
+    import db
+    from config import load_config
+    from paths import task_work_dir, render_dir
+    from synx import SynxClient
+    import pipeline
+
+    cfg = load_config()
+    client = SynxClient(cfg["synx"]["base_url"], cfg["synx"]["login"], cfg["synx"]["password"])
+    proj = next((p for p in client.projects()
+                 if str(p.get("alias") or "").lower() == project.lower()), None)
+    if not proj:
+        raise ValueError(f"project not found: {project}")
+    all_locs = [e for e in client.entities(proj["id"]) if e.get("asset_type") == "Location"]
+    if locations and [x.lower() for x in locations] != ["all"]:
+        wanted = {x.lower() for x in locations}
+        all_locs = [e for e in all_locs if str(e.get("name")).lower() in wanted]
+    if not all_locs:
+        raise ValueError("no locations to process")
+
+    ids = []
+    for e in all_locs:
+        name = e["name"]
+        task = next((t for t in client.tasks(e["id"])
+                     if t.get("task_name") == "location_develop"
+                     and t.get("task_type") == "Concept"), None)
+        versions = client.versions(e["id"])
+        next_ver = max([int(v.get("version_number") or 0) for v in versions] + [0]) + 1
+        work = task_work_dir(cfg, project, name, "", "Concept", bot,
+                             "location_develop", next_ver, entity_kind="asset")
+        render = render_dir(cfg, project, name, "", next_ver, entity_kind="asset")
+        plan = {"passport": True, "views": int(views),
+                "synx_task_name": "location_develop", "synx_task_type": "Concept",
+                "summary": f"Location passport: {e.get('display_name')}",
+                "workflow_config": {"profile": "flux3_t2i", "steps": 26, "cfg": 2.0,
+                                    "width": 1536, "height": 864}}
+        src = {"project_id": proj["id"], "project_alias": project,
+               "entity_id": e["id"], "entity_kind": "asset", "shot": name,
+               "display_name": e.get("display_name") or name,
+               "target_version": next_ver}
+        tid = db.create_task({
+            "publication_id": None, "synx_task_id": task.get("id") if task else None,
+            "project_id": proj["id"], "entity_id": e["id"], "shot": name,
+            "task_name": "location_passport", "task_type": "Passport", "bot": bot,
+            "status": "queued", "stage": "queued", "progress": 0,
+            "prompt": f"passport: {views} views + preview",
+            "negative": NEG, "plan_json": json.dumps(plan, ensure_ascii=False),
+            "plan_md": "", "plan_md_path": "", "workflow_json": None,
+            "source_json": json.dumps(src, ensure_ascii=False),
+            "work_dir": str(work), "render_dir": str(render), "result_file": None,
+            "version_id": None, "version_code": None, "synx_url": None,
+            "error": None, "paused": 0, "skipped": 0, "priority": 0,
+        })
+        ids.append(tid)
+
+    status = pipeline.manager.start() if start_manager else pipeline.manager.status()
+    return {"queued": len(ids), "task_ids": ids, "pipeline": status,
+            "status_file": str(STATUS_PATH)}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project", required=True)

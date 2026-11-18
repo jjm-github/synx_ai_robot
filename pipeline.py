@@ -217,6 +217,60 @@ class PipelineManager:
         db.update_task(tid, stage=stage, progress=progress, **extra)
         return True
 
+    def _run_passport(self, tid: int, task: dict[str, Any], plan: dict[str, Any]) -> None:
+        """One visible pipeline task = 9 views + preview -> 10-page PDF -> version."""
+        import passport_batch
+        import chat
+        import doc_flow
+        import publish_flow
+        from pathlib import Path
+
+        src = task.get("source_json") or {}
+        name = str(task.get("shot") or "")
+        views = int(plan.get("views") or 9)
+        paths = []
+        for i, (suffix, angle) in enumerate(passport_batch.VIEWS[:views], 1):
+            if not self._stage(tid, f"passport view {i}/{views}", 10 + int(80 * i / views)):
+                return
+            desc = passport_batch.LOCATION_PROMPTS.get(name, name)
+            prompt = (f"Concept art of {desc}. {angle}. Animated feature background "
+                      "painting, watercolor and gouache, detailed environment, cinematic "
+                      "composition, no people, no text, no logos")
+            gen = chat.generate_image(
+                prompt, passport_batch.NEG, [],
+                options={"workflow": "flux3_t2i", "width": 1536, "height": 864,
+                         "steps": 26, "cfg": 2.0, "seed": 20261117 + i})
+            if not gen:
+                raise PipelineError("passport view returned no image")
+            paths.append(Path(gen[0]["path"]))
+
+        if not self._stage(tid, "passport assembly", 92):
+            return
+        work = Path(str(task.get("work_dir") or ""))
+        work.mkdir(parents=True, exist_ok=True)
+        preview = passport_batch.contact_sheet(
+            paths, work / f"{name}_preview.png",
+            f"{src.get('display_name') or name} — {len(paths)} views")
+        pdf = work / "location_passport.pdf"
+        publish_flow.make_pdf([preview, *paths], pdf, page_size="A3", dpi=144, margin_mm=8)
+        info = publish_flow.verify_pdf(pdf)
+        if not info.get("ok"):
+            raise PipelineError("passport pdf: " + "; ".join(info.get("errors") or []))
+        res = doc_flow.publish_pdf_as_version(
+            str(src.get("project_alias") or ""), name, pdf,
+            task_name=str(plan.get("synx_task_name") or "location_develop"),
+            task_type=str(plan.get("synx_task_type") or "Concept"),
+            bot_login=str(task.get("bot") or "a.smirnov"),
+            comment=(f"Паспорт локации: {src.get('display_name') or name} — "
+                     f"{len(paths)} видов + превью, {info.get('pages')} стр., A3."),
+            record_db=False)
+        db.update_task(tid, status="done", stage="published", progress=100,
+                       result_file=str(pdf), version_id=res.get("version_id"),
+                       version_code=res.get("version_code"), synx_url=res.get("url"),
+                       finished_at=db.now(), error=None)
+        db.add_event(tid, "published",
+                     f"passport {res.get('version_code')}: {res.get('url') or pdf}")
+
     def _process(self, task: dict[str, Any]) -> None:
         tid = int(task["id"])
         self.current_id = tid
@@ -244,6 +298,10 @@ class PipelineManager:
             if not self._stage(tid, "analysis", 15):
                 return
             time.sleep(0.3)
+
+            if isinstance(plan, dict) and plan.get("passport"):
+                self._run_passport(tid, task, plan)
+                return
 
             if not self._stage(tid, "generation", 40):
                 return
