@@ -50,6 +50,119 @@ def _resolve(client: SynxClient, project: str, entity: str
     return proj, ent
 
 
+def publish_pdf_as_version(project: str, entity: str, pdf_path: str | Path, *,
+                           task_name: str | None = None,
+                           task_type: str | None = None,
+                           bot_login: str | None = None,
+                           comment: str = "",
+                           progress: Callable[[dict[str, Any]], None] | None = None
+                           ) -> dict[str, Any]:
+    """Publish an existing PDF (raster or vector) as a version of ANY entity.
+
+    Works for assets (locations, objects, characters) as well as shots —
+    unlike publish_images_as_version, which only resolves shots.
+    """
+    import publish_flow
+    from paths import render_dir as _render_dir, task_work_dir as _task_work_dir
+
+    def stage(msg: str) -> None:
+        if progress:
+            progress({"type": "stage", "text": msg})
+
+    pdf = Path(str(pdf_path)).expanduser()
+    if not pdf.is_file():
+        raise ValueError(f"нет PDF: {pdf}")
+    check = publish_flow.verify_pdf(pdf)
+    if not check.get("ok"):
+        raise ValueError("PDF не прошёл проверку: " + "; ".join(check.get("errors") or []))
+
+    cfg = load_config()
+    client = SynxClient(cfg["synx"]["base_url"], cfg["synx"]["login"], cfg["synx"]["password"])
+    proj, ent = _resolve(client, project, entity)
+    alias = str(proj.get("alias") or project)
+    entity_name = str(ent.get("name") or entity)
+    entity_kind = str(ent.get("entity_kind") or "asset")
+    sequence = str(ent.get("sequence_name") or "")
+
+    name = task_name or "location_develop"
+    types = client.task_types(proj["id"])
+    requested_type = task_type or "Concept"
+    if types and requested_type not in types and requested_type != "Script":
+        requested_type = "Art" if "Art" in types else (types[0] if types else "Art")
+    tasks = client.tasks(ent["id"])
+    task = next((t for t in tasks if t.get("task_name") == name), None)
+    if task and task.get("task_type"):
+        requested_type = str(task["task_type"])
+    if not task:
+        stage("Создаю задачу в synx...")
+        task = client.create_task(ent["id"], name, requested_type,
+                                  comment=comment or f"PDF: {pdf.name}", bid=3.0,
+                                  status="wip")
+    task_id = task.get("id")
+
+    stage("Выбираю бота по скилам...")
+    bot, user = _pick_bot(client, task_id, bot_login)
+    bot_name = bot.get("login")
+    try:
+        client.assign(task_id, [user.get("id")])
+    except Exception:
+        pass
+
+    versions = client.versions(ent["id"])
+    next_ver = max([int(v.get("version_number") or 0) for v in versions] + [0]) + 1
+    work = _task_work_dir(cfg, alias, entity_name, sequence, requested_type,
+                          bot_name, name, next_ver, entity_kind=entity_kind)
+    render = _render_dir(cfg, alias, entity_name, sequence, next_ver, entity_kind=entity_kind)
+    work.mkdir(parents=True, exist_ok=True)
+    render.mkdir(parents=True, exist_ok=True)
+    dst = work / pdf.name
+    if pdf.resolve() != dst.resolve():
+        shutil.copy2(pdf, dst)
+    shutil.copy2(dst, render / dst.name)
+    (work / "README.md").write_text(
+        f"# {name}\n\n- Проект: {alias}\n- Сущность: {entity_name} ({entity_kind})\n"
+        f"- Задача synx: {task_id} ({name}, {requested_type})\n- Бот: {bot_name}\n"
+        f"- PDF: {dst.name} — {check.get('pages')} стр., проверен\n- Render: {render}\n",
+        encoding="utf-8")
+
+    stage("Публикую версию от имени бота...")
+    bc = bot_client(cfg["synx"]["base_url"], bot)
+    v = bc.publish_version(ent["id"], dst, task_id,
+                           comment=comment or f"{name}: PDF, {check.get('pages')} стр.",
+                           minutes=10, note="Synx AI Robot PDF version")
+    vcode = v.get("version_code")
+    media = v.get("media") or {}
+    url = version_url(cfg["synx"]["base_url"], alias, entity_kind, entity_name,
+                      vcode, requested_type, name) if vcode else None
+    if url:
+        try:
+            bc.task_comment(task_id, f"{vcode}: PDF {dst.name}\n{url}")
+        except Exception:
+            pass
+    try:
+        client.task_status(task_id, "done")
+    except Exception:
+        pass
+
+    tid = db.create_task({
+        "publication_id": None, "synx_task_id": task_id, "project_id": proj["id"],
+        "entity_id": ent["id"], "shot": entity_name, "task_name": name,
+        "task_type": requested_type, "bot": bot_name, "status": "done",
+        "stage": "published", "progress": 100, "prompt": pdf.name,
+        "negative": "", "plan_json": json.dumps(check, ensure_ascii=False),
+        "plan_md": "", "plan_md_path": "", "workflow_json": None,
+        "source_json": json.dumps({"project": alias, "entity": entity_name,
+                                   "entity_kind": entity_kind}, ensure_ascii=False),
+        "work_dir": str(work), "render_dir": str(render), "result_file": str(dst),
+        "version_id": v.get("id"), "version_code": vcode, "synx_url": url, "priority": 0,
+    })
+    db.add_event(tid, "published", f"PDF version {vcode}: {url or dst}")
+    return {"ok": True, "project": alias, "entity": entity_name, "kind": entity_kind,
+            "version_code": vcode, "version_id": v.get("id"), "url": url,
+            "media_kind": media.get("kind"), "pdf": str(dst), "pdf_info": check,
+            "work_dir": str(work), "render_dir": str(render), "bot": bot_name}
+
+
 def publish_text_document(project: str, entity: str, *,
                           text: str | None = None,
                           pdf_path: str | Path | None = None,

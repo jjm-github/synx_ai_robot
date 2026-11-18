@@ -159,6 +159,10 @@ PDF на стандартных страницах, проверит его и �
   ассеты, что создал робот»). Сначала найди и покажи список (id, имя, тип,
   версии/задачи), затем вызывай `synx_delete_entity`. Непустые сущности
   (с версиями/задачами) удаляй только с `force=true` после явного подтверждения.
+- Версия для АССЕТА (локация/объект/персонаж) публикуется через
+  `publish_pdf_as_version` (любой PDF, растровый или текстовый). Не ищи шот и
+  не говори, что для ассетов публикация невозможна: `publish_images_as_version`
+  только для шотов, `publish_pdf_as_version` — для всех.
 - «Пересобери PDF версии vNNN» = содержимое ИМЕННО этой версии, не склейка
   других документов. Сначала прочитай версию (PDF → pdftotext, видео → кадры),
   затем собери текстовый PDF с тем же содержимым и опубликуй новой версией.
@@ -884,6 +888,21 @@ TEXT_DOC_TOOLS = [
             "page_size": {"type": "string", "enum": ["A4", "A3", "LETTER"], "default": "A4"},
             "font_size": {"type": "number", "default": 10.5},
         }, "required": ["text"]},
+    }},
+    {"type": "function", "function": {
+        "name": "publish_pdf_as_version",
+        "description": ("Publish an existing PDF as a synx version of ANY entity (asset or shot): "
+                        "locations, objects, characters. Use this for location passports and raster "
+                        "PDFs — publish_images_as_version works only for shots."),
+        "parameters": {"type": "object", "properties": {
+            "project": {"type": "string"},
+            "entity": {"type": "string", "description": "Asset/shot name, e.g. loc_ferma_late_summer"},
+            "pdf_path": {"type": "string"},
+            "task_name": {"type": "string", "description": "e.g. location_develop"},
+            "task_type": {"type": "string", "description": "e.g. Concept"},
+            "bot": {"type": "string"},
+            "comment": {"type": "string"},
+        }, "required": ["project", "entity", "pdf_path"]},
     }},
     {"type": "function", "function": {
         "name": "publish_text_document",
@@ -2323,6 +2342,19 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
                 page_size=args.get("page_size") or "A4",
                 font_size=float(args.get("font_size") or 10.5))
             return info, [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
+    if name == "publish_pdf_as_version":
+        args, err = _publish_guard(session_id or "default", args)
+        if err:
+            return err, [], None
+        try:
+            return doc_flow.publish_pdf_as_version(
+                args.get("project") or "", args.get("entity") or args.get("shot") or "",
+                args.get("pdf_path") or "",
+                task_name=args.get("task_name"), task_type=args.get("task_type"),
+                bot_login=args.get("bot"), comment=args.get("comment") or "",
+                progress=progress), [], None
         except Exception as exc:
             return {"error": str(exc)}, [], None
     if name == "publish_text_document":
