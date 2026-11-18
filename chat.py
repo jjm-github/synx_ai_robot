@@ -141,6 +141,15 @@ PDF на стандартных страницах, проверит его и �
 - «Продолжай» = продолжай прежний план до конца, включая публикацию.
 - Бота выбирай сам по скилам (AI/Pipeline — генерация, текст/сценарий — любой
   AI). Уточняй исполнителя только при явной неоднозначности.
+- Имена сущностей — латинский slug, совпадающий с папкой: `loc_...`, `obj_...`,
+  `p002_0130`. `display_name` — человекочитаемое (латиница/английский), `info` —
+  полное ТЗ на русском: что это, геометрия, свет, материалы, цвет, что в кадре,
+  зачем. Пустое ТЗ недопустимо.
+- Имя задачи — slug, совпадающий с папкой/сущностью (`loc_ocean_seiner`), а не
+  тип (`art`) и не кириллица. Для каждой задачи в первом комментарии — ТЗ:
+  задача, исходные данные, формат сдачи, стиль, что сдать, критерии приёмки.
+  Заглушки вида «Art task for ...» недопустимы.
+- Если ТЗ нет — заполни его через `synx_update_entity` (info) и `synx_task_comment`.
 - Удаление сущностей — только по явной просьбе («удали ассет/шот X», «удали все
   ассеты, что создал робот»). Сначала найди и покажи список (id, имя, тип,
   версии/задачи), затем вызывай `synx_delete_entity`. Непустые сущности
@@ -575,6 +584,35 @@ SYNX_TOOLS = [
             "description": "List valid task types for a synx project.",
             "parameters": {"type": "object", "properties": {"project": {"type": "string"}},
                            "required": ["project"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "synx_update_entity",
+            "description": ("Update an entity: info (the ТЗ/description), display_name, "
+                            "asset_type. Use to fill a missing ТЗ instead of leaving it empty."),
+            "parameters": {"type": "object", "properties": {
+                "project": {"type": "string"},
+                "name": {"type": "string"},
+                "info": {"type": "string", "description": "Full technical description (ТЗ)"},
+                "display_name": {"type": "string"},
+                "asset_type": {"type": "string"},
+            }, "required": ["project", "name"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "synx_task_comment",
+            "description": ("Add a comment to a synx task. Use to write the task ТЗ if it is "
+                            "missing or to document decisions."),
+            "parameters": {"type": "object", "properties": {
+                "task_id": {"type": "string"},
+                "body": {"type": "string"},
+                "files": {"type": "array", "items": {"type": "string"},
+                          "description": "Images only (synx comments reject other files)"},
+            }, "required": ["task_id", "body"]},
         },
     },
     {
@@ -2068,6 +2106,25 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
                 args.get("entity_kind") or "asset", args.get("asset_type"),
                 args.get("info"), args.get("display_name"), args.get("cut_in"),
                 args.get("cut_out"), args.get("task_types"), args.get("skill_codes")), [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
+    if name == "synx_update_entity":
+        try:
+            return synx_tools.update_entity(
+                args.get("project") or "", args.get("name") or "",
+                args.get("info"), args.get("display_name"),
+                args.get("asset_type")), [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
+    if name == "synx_task_comment":
+        try:
+            import synx as synx_mod
+            cfg = load_config()
+            client = synx_mod.SynxClient(cfg["synx"]["base_url"], cfg["synx"]["login"],
+                                         cfg["synx"]["password"])
+            files = [str(f) for f in (args.get("files") or [])]
+            return {"ok": True, "comment": client.task_comment(
+                str(args.get("task_id") or ""), args.get("body") or "", files=files or None)}, [], None
         except Exception as exc:
             return {"error": str(exc)}, [], None
     if name == "synx_entities":

@@ -401,7 +401,8 @@ def create_entity(project: str, name: str, entity_kind: str = "asset",
                   asset_type: str | None = None, info: str | None = None,
                   display_name: str | None = None, cut_in: int | None = None,
                   cut_out: int | None = None, task_types: list[str] | None = None,
-                  skill_codes: list[str] | None = None) -> dict[str, Any]:
+                  skill_codes: list[str] | None = None,
+                  task_name: str | None = None) -> dict[str, Any]:
     c = client()
     p = _project(c, project)
     entity_kind = "shot" if str(entity_kind).lower() == "shot" else "asset"
@@ -428,15 +429,31 @@ def create_entity(project: str, name: str, entity_kind: str = "asset",
     payload = {
         "entity_kind": entity_kind, "name": name,
         "display_name": display_name or name, "info": info or "",
-        "asset_type": resolved_type, "task_types": task_types or [],
-        "skill_codes": skill_codes or [],
+        "asset_type": resolved_type, "skill_codes": skill_codes or [],
     }
     if cut_in is not None:
         payload["cut_in"] = int(cut_in)
     if cut_out is not None:
         payload["cut_out"] = int(cut_out)
     e = c.create_entity(p["id"], payload)
+    created_tasks = []
+    # Create tasks explicitly: the API's task_types auto-naming produces a
+    # generic "art" task, which does not match the folder/task convention.
+    task_type_list = [str(t) for t in (task_types or []) if str(t).strip()]
+    for tt in task_type_list:
+        try:
+            tz = (f"ТЗ ({tt}) — {display_name or e['name']}\n\n{info}" if info
+                  else f"ТЗ ({tt}) — {display_name or e['name']}: описание не задано, "
+                       f"заполнить перед стартом.")
+            t = c.create_task(e["id"], task_name or e["name"], tt,
+                              comment=tz, bid=3.0, status="todo")
+            created_tasks.append({"id": t.get("id"), "task_name": t.get("task_name"),
+                                  "task_type": t.get("task_type")})
+        except Exception:
+            pass
+    e["tasks"] = created_tasks
     return {"ok": True, "exists": False, "entity": e,
+            "tasks": created_tasks,
             "url": _entity_url(c.base, p.get("alias"), e)}
 
 
@@ -490,6 +507,34 @@ def entities(project: str, entity_kind: str | None = None,
             "sequence_name": e.get("sequence_name"),
         })
     return {"project": p.get("alias"), "count": len(out), "items": out[:int(limit)]}
+
+
+def update_entity(project: str, name: str, info: str | None = None,
+                  display_name: str | None = None,
+                  asset_type: str | None = None) -> dict[str, Any]:
+    """Update entity fields (ТЗ, display name, asset type)."""
+    c = client()
+    p = _project(c, project)
+    e = find_entity(project, name)
+    payload: dict[str, Any] = {}
+    if info is not None:
+        payload["info"] = info
+    if display_name is not None:
+        payload["display_name"] = display_name
+    if asset_type is not None:
+        resolved = None
+        for t in c.asset_types(p["id"]):
+            if str(asset_type).lower() in (str(t.get("code")).lower(),
+                                          str(t.get("label")).lower()):
+                resolved = t.get("code")
+                break
+        if not resolved:
+            raise ValueError(f"unknown asset_type: {asset_type}")
+        payload["asset_type"] = resolved
+    if not payload:
+        raise ValueError("nothing to update")
+    updated = c.update_entity(e["id"], payload)
+    return {"ok": True, "entity": updated}
 
 
 def delete_entity(project: str, name: str | None = None,
