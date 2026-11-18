@@ -519,6 +519,21 @@ def entities(project: str, entity_kind: str | None = None,
     return {"project": p.get("alias"), "count": len(out), "items": out[:int(limit)]}
 
 
+def assign_task(task_id: str, bot_login: str) -> dict[str, Any]:
+    """Assign a bot to an existing synx task by login/short_name."""
+    c = client()
+    users = c.assignment_users(task_id)
+    user = next((u for u in users
+                 if str(u.get("short_name") or "").lower() == str(bot_login).lower()
+                 or str(u.get("login") or "").lower() == str(bot_login).lower()), None)
+    if not user:
+        names = ", ".join(str(u.get("short_name")) for u in users[:30])
+        raise ValueError(f"бот {bot_login} недоступен для назначения. Доступные: {names}")
+    c.assign(task_id, [user["id"]])
+    return {"ok": True, "task_id": task_id, "assigned": bot_login,
+            "user_id": user["id"]}
+
+
 def update_entity(project: str, name: str, info: str | None = None,
                   display_name: str | None = None,
                   asset_type: str | None = None,

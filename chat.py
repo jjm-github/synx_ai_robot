@@ -159,6 +159,9 @@ PDF на стандартных страницах, проверит его и �
   ассеты, что создал робот»). Сначала найди и покажи список (id, имя, тип,
   версии/задачи), затем вызывай `synx_delete_entity`. Непустые сущности
   (с версиями/задачами) удаляй только с `force=true` после явного подтверждения.
+- «Просчитай все локации/шоты через конвейер» = создай по задаче на каждую
+  сущность и запусти конвейер, не спрашивая подтверждения. Назначение ботов на
+  существующие задачи — `synx_assign_task` (не пересоздавай задачу).
 - Версия для АССЕТА (локация/объект/персонаж) публикуется через
   `publish_pdf_as_version` (любой PDF, растровый или текстовый). Не ищи шот и
   не говори, что для ассетов публикация невозможна: `publish_images_as_version`
@@ -593,6 +596,18 @@ SYNX_TOOLS = [
             "description": "List valid task types for a synx project.",
             "parameters": {"type": "object", "properties": {"project": {"type": "string"}},
                            "required": ["project"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "synx_assign_task",
+            "description": ("Assign a bot/user to an EXISTING synx task by login (e.g. a.smirnov). "
+                            "Use it instead of trying to recreate the task."),
+            "parameters": {"type": "object", "properties": {
+                "task_id": {"type": "string"},
+                "bot": {"type": "string"},
+            }, "required": ["task_id", "bot"]},
         },
     },
     {
@@ -2153,6 +2168,12 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
                 args.get("info"), args.get("display_name"), args.get("cut_in"),
                 args.get("cut_out"), args.get("task_types"), args.get("skill_codes"),
                 args.get("task_name"), args.get("linked_assets")), [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
+    if name == "synx_assign_task":
+        try:
+            return synx_tools.assign_task(str(args.get("task_id") or ""),
+                                          str(args.get("bot") or "")), [], None
         except Exception as exc:
             return {"error": str(exc)}, [], None
     if name == "synx_link_assets":

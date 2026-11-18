@@ -174,6 +174,10 @@ output_dir ~/opt/ComfyUI/output
 - `synx_set_task_status` — смена статуса задачи (todo/wip/Pending_Review/done/hold/omit).
 - `synx_entities` — список сущностей проекта (id, имя, display_name, тип, created_by,
   число версий/задач) — для поиска и чистки.
+- `publish_pdf_as_version` — опубликовать готовый PDF версией для ЛЮБОЙ сущности
+  (локация, объект, персонаж, шот). `publish_images_as_version` работает только
+  для шотов; для ассетов — этот инструмент.
+- `synx_assign_task` — назначить бота на существующую задачу по логину.
 - `synx_update_entity` — обновить `info` (ТЗ), `display_name`, `asset_type`.
 - `synx_task_comment` — добавить комментарий/ТЗ к задаче.
 
