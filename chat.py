@@ -120,10 +120,30 @@ PDF на стандартных страницах, проверит его и �
   в блоке «Текущий фокус». Не переноси шоты и версии из предыдущих сообщений.
 - Упоминание версии (`p002_0410_art_v002`, «версия 13») — это референс для
   работы, а НЕ разрешение публиковать.
-- Публикуй версию только по явной просьбе: «опубликуй», «сделай версию»,
-  «запушь», «выложи». Если просьбы нет — собери и покажи результат.
-- Перед публикацией сверь project/shot/version с текущим фокусом. Если они
-  расходятся — остановись и уточни, а не публикуй другой шот.
+- Публикуй версию по явной просьбе: «опубликуй», «сделай версию», «запушь»,
+  «выложи». Разрешение действует на всю сессию: после него «продолжай»
+  означает «доделай и опубликуй», повторное подтверждение не нужно.
+- Цель публикации задаётся текстом в чате, переключать фокус в интерфейсе
+  НЕ нужно: называй её в аргументах инструмента явно (project, shot, version).
+
+## Массовые публикации и дэйли (опыт из практики)
+
+- Несколько документов = несколько версий = несколько вызовов
+  `publish_images_as_version` подряд, по одному на документ, с явными
+  project/shot в аргументах. Делай все публикации за один заход.
+- Не переспрашивай подтверждение, если пользователь уже назвал, что и куда
+  публиковать. Не проси «сменить фокус в приложении» и не рассказывай про
+  focus_mismatch — цель задаётся текстом: «в test_proekt_vfx / main_script»,
+  «фокус: <проект>/<сущность>», «шот p002_0130».
+- «Продолжай» = продолжай прежний план до конца, включая публикацию.
+- Бота выбирай сам по скилам (AI/Pipeline — генерация, текст/сценарий — любой
+  AI). Уточняй исполнителя только при явной неоднозначности.
+- После каждой публикации проверяй media.kind версии и возвращай ссылку вида
+  `?tab=tasks&t=<kind>-<name>-<type>-<task>&v=<kind>-<name>-<vXXX>`.
+- Рабочие файлы (PNG страниц, .md, PDF, meta, README) раскладывай в папку
+  задачи `.../work/<bot>/<task>_vXXX/`, финальный PDF — ещё и в `render/vXXX`.
+- Если что-то упало на середине (лимит шагов, таймаут) — на «продолжай»
+  продолжай с того же места, а не начинай заново и не жди подтверждения.
 
 ## Веб-поиск и LoRA
 
@@ -1504,6 +1524,9 @@ FOCUS_VERSION_RE = re.compile(r"\b(?:верси[яию]|version)\s*v?(\d{1,4})\b
 PROJECT_HINTS = {
     "либерия": "liberia", "liberia": "liberia",
     "колоссус": "colossus", "colossus": "colossus",
+    "тестовый проект": "test_proekt_vfx", "test_proekt_vfx": "test_proekt_vfx",
+    "экспериментальный проект": "test_proekt_vfx",
+    "экспериментальном проекте": "test_proekt_vfx",
 }
 
 
@@ -1521,37 +1544,119 @@ def _project_from_text(text: str) -> str | None:
     return None
 
 
+FOCUS_IN_PROJECT_RE = re.compile(
+    r"\b(?:в|на|проект[ае]?)\s+([a-z0-9][a-z0-9_.-]*)\s*/\s*([a-z0-9][a-z0-9_.-]*)", re.I)
+FOCUS_NAMED_ENTITY_RE = re.compile(
+    r"\b(?:сущность|ассет|шота|шот|shot|asset|entity)\s+[«\"']?([A-Za-z][A-Za-z0-9_.-]{2,})", re.I)
+
+
+def _focus_ids_from_line(text: str) -> list[str]:
+    """Identifiers after «фокус:» / «focus:» (project, entity, shot code)."""
+    m = re.search(r"(?:фокус|focus)\s*[:\-—]?\s*(.+)", text or "", re.I)
+    if not m:
+        return []
+    ids = re.findall(r"[A-Za-z0-9][A-Za-z0-9_.-]{2,}", m.group(1))
+    out: list[str] = []
+    for i in ids:
+        il = i.lower().rstrip(".;,")
+        if re.fullmatch(r"v?\d+", il):
+            continue
+        out.append(il)
+    return out
+
+
 def _update_focus(session_id: str, text: str) -> dict[str, Any]:
-    """Remember the shot/version named in the current message."""
+    """Remember the entity/version named in the current message.
+
+    Recognises shot codes (p002_0130_v017), named assets (main_script),
+    focus lines («фокус: test_proekt_vfx / main_script») and Russian project
+    display names («тестовый проект»). Also persists the publish intent: once
+    the user said «опубликуй», it stays for the session, so «продолжай»
+    still allows publishing without re-asking.
+    """
     t = text or ""
+    low = t.lower()
     project = _project_from_text(t)
     shot = None
     version = None
-    m = FOCUS_CODE_RE.search(t)
-    if m:
-        shot = m.group(1).lower()
-        version = "v" + str(int(m.group(3))).zfill(3)
-    else:
-        m = FOCUS_SHOT_RE.search(t)
+
+    # explicit focus line: «фокус: test_proekt_vfx / main_script»
+    m_ids = _focus_ids_from_line(t)
+    if m_ids:
+        proj_l = str(project or "").lower()
+        for cand in m_ids:
+            if project and cand == proj_l:
+                continue
+            if FOCUS_SHOT_RE.fullmatch(cand) or FOCUS_CODE_RE.fullmatch(cand):
+                shot = cand
+                break
+        if not shot:
+            ents = [c for c in m_ids if c != proj_l
+                    and not (FOCUS_SHOT_RE.fullmatch(cand := c) or FOCUS_CODE_RE.fullmatch(c))]
+            if ents:
+                shot = ents[0]
+    # «в <project> / <entity>»
+    if not shot:
+        for mp, me in FOCUS_IN_PROJECT_RE.findall(t):
+            if project and mp.lower() == str(project).lower():
+                shot = me.lower()
+                break
+    # «сущность/ассет/шот <name>»
+    if not shot:
+        m = FOCUS_NAMED_ENTITY_RE.search(t)
         if m:
             shot = m.group(1).lower()
-            if m.group(2):
-                version = "v" + str(int(m.group(2))).zfill(3)
-            else:
-                mv = re.search(r"\b(?:верси[яию]|version)\s*v?(\d{1,4})\b", t, re.I)
-                if mv:
-                    version = "v" + str(int(mv.group(1))).zfill(3)
+    # shot codes with version
+    if not shot:
+        m = FOCUS_CODE_RE.search(t)
+        if m:
+            shot = m.group(1).lower()
+            version = "v" + str(int(m.group(3))).zfill(3)
+        else:
+            m = FOCUS_SHOT_RE.search(t)
+            if m:
+                shot = m.group(1).lower()
+                if m.group(2):
+                    version = "v" + str(int(m.group(2))).zfill(3)
+                else:
+                    mv = re.search(r"\bv(\d{1,4})\b", t[m.end():m.end() + 60], re.I)
+                    if mv:
+                        version = "v" + str(int(mv.group(1))).zfill(3)
     if not version:
         mv = FOCUS_VERSION_RE.search(t)
         if mv:
             version = "v" + str(int(mv.group(1))).zfill(3)
+    intent = None
+    if NO_PUBLISH_RE.search(low):
+        intent = False
+    elif PUBLISH_INTENT_RE.search(low):
+        intent = True
     db.set_chat_focus(session_id, project=project or None, shot=shot,
-                      version=version, last_text=t)
+                      version=version, last_text=t, publish_intent=intent)
     return db.get_chat_focus(session_id) or {}
 
 
+def _recent_user_texts(session_id: str, n: int = 8) -> str:
+    rows = db.all(
+        "SELECT content FROM chat_messages WHERE session_id=? AND role='user' "
+        "ORDER BY id DESC LIMIT ?", (session_id, int(n)))
+    return "\n".join(str(r.get("content") or "") for r in reversed(rows))
+
+
+def _user_named_target(session_id: str, name: str, n: int = 10) -> bool:
+    """True when the target entity was named by the user in recent messages."""
+    name = str(name or "").strip().lower()
+    if not name:
+        return True
+    try:
+        recent = _recent_user_texts(session_id, n).lower()
+    except Exception:
+        return False
+    return re.search(r"(?<![\w])" + re.escape(name) + r"(?![\w])", recent) is not None
+
+
 PUBLISH_INTENT_RE = re.compile(
-    r"(опублику|публикуй|запуш|выложи|залей|publish|"
+    r"(опублику|публикуй|публикац|запуш|выложи|залей|publish|"
     r"сделай\s+(?:новую\s+)?верси|создай\s+(?:новую\s+)?верси)", re.I)
 NO_PUBLISH_RE = re.compile(r"(не\s+публик|не\s+надо\s+публик|без\s+публикац)", re.I)
 
@@ -1814,7 +1919,8 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
         return result, [], None
     if name == "publish_daily_pdf":
         focus = db.get_chat_focus(session_id or "default") or {}
-        if not _publish_intent(str(focus.get("last_text") or "")):
+        intent = bool(focus.get("publish_intent")) or _publish_intent(str(focus.get("last_text") or ""))
+        if not intent:
             return {"error": "publish_not_requested",
                     "message": ("Пользователь не просил публиковать версию. Собери PDF и "
                                 "покажи результат; публикуй только по явной команде.")}, [], None
@@ -1832,9 +1938,12 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
         if not task:
             return {"error": f"task not found: {task_id}"}, [], None
         if fshot and str(task.get("shot") or "") != fshot:
-            return {"error": "focus_mismatch",
-                    "message": (f"Задача относится к шоту {task.get('shot')}, а текущий "
-                                f"фокус — {fshot}. Не публикуй другой шот.")}, [], None
+            if _user_named_target(session_id or "default", str(task.get("shot") or "")):
+                db.set_chat_focus(session_id or "default", shot=str(task.get("shot") or ""))
+            else:
+                return {"error": "focus_mismatch",
+                        "message": (f"Задача относится к шоту {task.get('shot')}, а текущий "
+                                    f"фокус — {fshot}. Не публикуй другой шот.")}, [], None
         work = Path(str(task.get("work_dir") or ""))
         images = sorted(work.glob("frame_*.png"))
         if not images:
@@ -1879,24 +1988,34 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
         return result, [], None
     if name == "publish_images_as_version":
         focus = db.get_chat_focus(session_id or "default") or {}
-        if not _publish_intent(str(focus.get("last_text") or "")):
+        intent = bool(focus.get("publish_intent")) or _publish_intent(str(focus.get("last_text") or ""))
+        if not intent:
             return {"error": "publish_not_requested",
                     "message": ("Пользователь не просил публиковать версию. Собери PDF и "
                                 "покажи результат; публикуй только по явной команде "
                                 "«опубликуй», «сделай версию», «запушь».")}, [], None
+        args = dict(args)
         fshot = str(focus.get("shot") or "")
+        requested = str(args.get("shot") or "").strip()
         if fshot:
-            args = dict(args)
-            requested = str(args.get("shot") or "")
             if requested and requested.lower() != fshot.lower():
-                return {"error": "focus_mismatch",
-                        "message": (f"Текущий фокус — шот {fshot}, а выбран {requested}. "
-                                    "Не публикуй другой шот: перечитай запрос пользователя.")}, [], None
-            args.setdefault("shot", fshot)
-            if focus.get("project"):
-                args["project"] = focus["project"]
-            if focus.get("version") and not args.get("version"):
-                args["version"] = focus["version"]
+                if _user_named_target(session_id or "default", requested):
+                    # the user named this target in chat — switch the focus
+                    # instead of blocking the publication
+                    db.set_chat_focus(session_id or "default", shot=requested)
+                    fshot = requested
+                else:
+                    return {"error": "focus_mismatch",
+                            "message": (f"Текущий фокус — {fshot}, а выбран {requested}. "
+                                        "Перечитай запрос: пользователь называл другую цель. "
+                                        "Если цель верная — пусть пользователь подтвердит "
+                                        "её текстом («фокус: <проект>/<сущность>).")}, [], None
+            elif not requested:
+                args.setdefault("shot", fshot)
+                if focus.get("project"):
+                    args["project"] = focus["project"]
+                if focus.get("version") and not args.get("version"):
+                    args["version"] = focus["version"]
         explicit = None
         if args.get("image_source") == "paths":
             explicit = [{"path": p} for p in (args.get("image_paths") or [])]

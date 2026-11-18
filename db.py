@@ -141,6 +141,7 @@ def init() -> None:
                 shot TEXT,
                 version TEXT,
                 last_text TEXT,
+                publish_intent INTEGER DEFAULT 0,
                 updated_at TEXT NOT NULL
             );
 
@@ -168,6 +169,9 @@ def init() -> None:
                          ("is_mention", "INTEGER DEFAULT 0")):
             if col not in pcols:
                 c.execute(f"ALTER TABLE publications ADD COLUMN {col} {typ}")
+        fcols = {r["name"] for r in c.execute("PRAGMA table_info(chat_focus)").fetchall()}
+        if "publish_intent" not in fcols:
+            c.execute("ALTER TABLE chat_focus ADD COLUMN publish_intent INTEGER DEFAULT 0")
         scols = {r["name"] for r in c.execute("PRAGMA table_info(chat_sessions)").fetchall()}
         if "context_md" not in scols:
             c.execute("ALTER TABLE chat_sessions ADD COLUMN context_md TEXT")
@@ -203,24 +207,32 @@ def execute(sql: str, params: Iterable[Any] = ()) -> int:
 
 def set_chat_focus(session_id: str, project: str | None = None,
                    shot: str | None = None, version: str | None = None,
-                   last_text: str | None = None) -> dict[str, Any]:
-    """Store the entity the current chat is working on (avoids stale targets)."""
+                   last_text: str | None = None,
+                   publish_intent: bool | None = None) -> dict[str, Any]:
+    """Store the entity the current chat is working on (avoids stale targets).
+
+    publish_intent: None = keep, True = user explicitly allowed publishing
+    in this session, False = user explicitly forbade it.
+    """
     prev = get_chat_focus(session_id) or {}
     row = {
         "project": project or prev.get("project"),
         "shot": shot or prev.get("shot"),
         "version": version or prev.get("version"),
+        "publish_intent": int(prev.get("publish_intent") or 0) if publish_intent is None else int(bool(publish_intent)),
     }
     with connect() as c:
         c.execute(
-            """INSERT INTO chat_focus (session_id, project, shot, version, last_text, updated_at)
-               VALUES (?,?,?,?,?,?)
+            """INSERT INTO chat_focus
+                 (session_id, project, shot, version, last_text, publish_intent, updated_at)
+               VALUES (?,?,?,?,?,?,?)
                ON CONFLICT(session_id) DO UPDATE SET
                  project=excluded.project, shot=excluded.shot,
                  version=excluded.version, last_text=excluded.last_text,
+                 publish_intent=excluded.publish_intent,
                  updated_at=excluded.updated_at""",
             (session_id, row["project"], row["shot"], row["version"],
-             (last_text or "")[:20000], now()))
+             (last_text or "")[:20000], int(row["publish_intent"]), now()))
         c.commit()
     return row
 
