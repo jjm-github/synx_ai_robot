@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import mimetypes
 import re
 import threading
@@ -221,10 +222,44 @@ class SynxClient:
                         files: list[str | Path] | None = None) -> dict[str, Any]:
         return self._post_comment(f"/api/versions/{version_id}/comments", body, files)
 
+    def _file_bytes(self, file_id: str, limit: int = 4_000_000) -> bytes:
+        r = self.s.get(f"{self.base}/files/{file_id}", timeout=120)
+        if r.status_code >= 400:
+            raise SynxError(f"file {file_id}: {r.status_code}")
+        return r.content[:limit]
+
     def create_publication(self, task_id: str, files: list[str | Path],
                            comment: str = "", minutes: int = 1,
-                           note: str = "robot") -> dict[str, Any]:
-        """Attach files to a task as a publication (any file type, incl. .md)."""
+                           note: str = "robot",
+                           dedupe: bool = True) -> dict[str, Any]:
+        """Attach files to a task as a publication (any file type, incl. .md).
+
+        dedupe=True skips the upload when a publication with identical file
+        contents already exists on the task (prevents duplicate .md uploads).
+        """
+        paths = [Path(f) for f in files if Path(f).is_file()]
+        if not paths:
+            raise SynxError("create_publication: no files")
+        if dedupe:
+            wanted = {hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
+            try:
+                for pub in self.task_publications(task_id):
+                    infos = pub.get("files") or []
+                    if len(infos) < len(paths):
+                        continue
+                    found = set()
+                    for fi in infos:
+                        if Path(str(fi.get("name") or "")).suffix.lower() not in {
+                                ".md", ".txt", ".json", ".csv", ".pdf"}:
+                            continue
+                        try:
+                            found.add(hashlib.sha256(self._file_bytes(fi["file_id"])).hexdigest())
+                        except Exception:
+                            continue
+                    if wanted <= found:
+                        return {**pub, "deduplicated": True}
+            except Exception:
+                pass
         handles: list[Any] = []
         payload: list[tuple[str, tuple[str, Any, str, dict[str, str]]]] = []
         try:

@@ -140,6 +140,14 @@ PDF на стандартных страницах, проверит его и �
 - «Продолжай» = продолжай прежний план до конца, включая публикацию.
 - Бота выбирай сам по скилам (AI/Pipeline — генерация, текст/сценарий — любой
   AI). Уточняй исполнителя только при явной неоднозначности.
+- «Пересобери PDF версии vNNN» = содержимое ИМЕННО этой версии, не склейка
+  других документов. Сначала прочитай версию (PDF → pdftotext, видео → кадры),
+  затем собери текстовый PDF с тем же содержимым и опубликуй новой версией.
+- Статус задачи меняется инструментом `synx_set_task_status` — не говори, что
+  не можешь закрыть задачу; публикация текстового документа и так ставит done.
+- Один и тот же файл не прикрепляй дважды: публикация задачи дедуплицируется
+  автоматически, но не вызывай `synx_attach_files` перед `publish_text_document`
+  с тем же файлом.
 - После каждой публикации проверяй media.kind версии и возвращай ссылку вида
   `?tab=tasks&t=<kind>-<name>-<type>-<task>&v=<kind>-<name>-<vXXX>`.
 - Рабочие файлы (PNG страниц, .md, PDF, meta, README) раскладывай в папку
@@ -567,6 +575,18 @@ SYNX_TOOLS = [
                 "task_types": {"type": "array", "items": {"type": "string"}},
                 "skill_codes": {"type": "array", "items": {"type": "string"}},
             }, "required": ["project", "name"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "synx_set_task_status",
+            "description": ("Change a synx task status (todo, wip, Pending_Review, done, "
+                            "hold, omit, ...). Use for «закрой задачу», «переведи в done»."),
+            "parameters": {"type": "object", "properties": {
+                "task_id": {"type": "string"},
+                "status": {"type": "string"},
+            }, "required": ["task_id", "status"]},
         },
     },
     {
@@ -1972,6 +1992,17 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
                 args.get("entity_kind") or "asset", args.get("asset_type"),
                 args.get("info"), args.get("display_name"), args.get("cut_in"),
                 args.get("cut_out"), args.get("task_types"), args.get("skill_codes")), [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
+    if name == "synx_set_task_status":
+        try:
+            import synx as synx_mod
+            cfg = load_config()
+            client = synx_mod.SynxClient(cfg["synx"]["base_url"], cfg["synx"]["login"],
+                                         cfg["synx"]["password"])
+            client.task_status(str(args.get("task_id") or ""), str(args.get("status") or "done"))
+            return {"ok": True, "task_id": args.get("task_id"),
+                    "status": args.get("status")}, [], None
         except Exception as exc:
             return {"error": str(exc)}, [], None
     if name == "synx_create_task":
