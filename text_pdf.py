@@ -130,6 +130,9 @@ def markdown_to_flowables(text: str, width: float, font_size: float = 10.5
                              leading=base + 3.5, spaceBefore=8, spaceAfter=3),
         "body": ParagraphStyle("body", fontName="DVS", fontSize=base,
                                leading=base * 1.45, spaceAfter=6),
+        "shot": ParagraphStyle("shot", fontName="DVS-Bold", fontSize=base,
+                               leading=base * 1.35, spaceBefore=6, spaceAfter=1,
+                               textColor=colors.HexColor("#111111")),
         "bullet": ParagraphStyle("bullet", fontName="DVS", fontSize=base,
                                  leading=base * 1.42, leftIndent=14, bulletIndent=4,
                                  spaceAfter=2),
@@ -195,6 +198,12 @@ def markdown_to_flowables(text: str, width: float, font_size: float = 10.5
             continue
         if not stripped:
             flush_para(); flush_table()
+            i += 1
+            continue
+        # A line that is entirely bold is a block of its own (shot headers).
+        if re.fullmatch(r"\*\*.+\*\*", stripped):
+            flush_para(); flush_table()
+            flow.append(Paragraph(_inline(stripped), styles["shot"]))
             i += 1
             continue
         m = re.match(r"^(#{1,6})\s+(.*)$", stripped)

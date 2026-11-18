@@ -80,7 +80,9 @@ def publish_text_document(project: str, entity: str, *,
 
     types = client.task_types(proj["id"])
     requested_type = task_type or ("Script" if "Script" in types else "Art")
-    if types and requested_type not in types:
+    # Asset scripts use the Script task type even when the project's task-type
+    # list does not advertise it (existing write_script tasks prove it works).
+    if types and requested_type not in types and requested_type != "Script":
         requested_type = "Script" if "Script" in types else (types[0] if types else "Art")
     name = task_name or _safe(title or Path(str(pdf_path or entity_name)).stem, "text_document")
 
@@ -112,7 +114,7 @@ def publish_text_document(project: str, entity: str, *,
     render.mkdir(parents=True, exist_ok=True)
 
     doc_title = title or name
-    stem = f"{_safe(name)}_{next_ver:03d}"
+    stem = f"{_safe(name)}_v{next_ver:03d}"
     if pdf_path:
         pdf = Path(pdf_path).expanduser()
         if not pdf.is_file():
@@ -185,7 +187,9 @@ def publish_text_document(project: str, entity: str, *,
     url = version_url(cfg["synx"]["base_url"], alias, entity_kind, entity_name,
                       vcode, requested_type, name) if vcode else None
 
-    files_to_attach = ([str(md_path)] if md_path else []) + attached
+    # Attach the source text and the PDF itself to the task publication:
+    # synx comments accept images only, publications accept any file type.
+    files_to_attach = ([str(md_path)] if md_path else []) + [str(pdf)] + attached
     publication = None
     if files_to_attach:
         stage("Прикрепляю файлы к задаче (публикация)...")
@@ -200,7 +204,17 @@ def publish_text_document(project: str, entity: str, *,
             check["attach_error"] = str(exc)
     if url:
         try:
-            bc.task_comment(task_id, f"{vcode}: {doc_title}\n{url}")
+            extra = (f"\nИсходники (PDF + текст): публикация "
+                     f"{publication.get('publication_code')}" if publication else "")
+            bc.task_comment(task_id, f"{vcode}: {doc_title}\n{url}{extra}")
+        except Exception:
+            pass
+    if v.get("id"):
+        try:
+            note = (f"Версия {vcode}: {doc_title}. "
+                    f"PDF — в версии, исходный текст и PDF — публикацией "
+                    f"{publication.get('publication_code') if publication else '—'}.")
+            bc.version_comment(v["id"], note)
         except Exception:
             pass
     try:

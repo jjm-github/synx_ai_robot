@@ -23,6 +23,7 @@ import mcp_runtime
 import pdf_cache
 import publish_flow
 import synx_tools
+import script_tools
 import system_info
 import text_pdf
 from ai import AIClient, AIError, _data_url
@@ -210,6 +211,21 @@ project, name, entity_kind (`asset`/`shot`), `asset_type` (можно label, и�
 Для «создай задачу» — `synx_create_task` с project, shot/entity, task_name,
 task_type (список — `synx_task_types`), assignee и comment. Не ходи по кругу
 через fs_list/synx_versions/verify_pdf: это операции записи, а не поиска.
+
+## Сценарий по шотам (пилот, эпизод)
+
+Если просят «сценарий пилота по шотам», «расписать по секвенциям/шотам»,
+«полный эпизод» — это НЕ прозаический пересказ. Формат обязательный:
+
+- каждая секвенция = одна локация, заголовок `## S01 · НАТ. ЛОКАЦИЯ — ВРЕМЯ`;
+- внутри — пронумерованные шоты `**S01-01 · WS · 8 c**`, ниже действие и реплики;
+- у каждого шота есть план (WS/MS/CU/OTS), действие и длительность в секундах;
+- эпизод целиком: 8–12 минут, сумма длительностей сходится с хронометражем;
+- в конце — «Правила пилота» и таблица хронометража по секвенциям.
+
+Порядок: напиши сценарий → `check_shot_script` (должен вернуть ok) →
+`publish_shot_script` (сам соберёт текстовый PDF, опубликует версию, приложит
+.md и PDF публикацией к задаче). Не публикуй прозу и не склеивай чужие версии.
 
 ## Текстовые документы (сценарии, планы, .md)
 
@@ -789,6 +805,31 @@ TEXT_DOC_TOOLS = [
                              "description": "Files to attach to the version comment (.md, .json, ...)"},
             "page_size": {"type": "string", "enum": ["A4", "A3", "LETTER"], "default": "A4"},
         }, "required": ["project", "entity"]},
+    }},
+    {"type": "function", "function": {
+        "name": "check_shot_script",
+        "description": ("Validate a shot-by-shot episode script: sequences (one per location), "
+                        "numbered shots with plan/duration, total runtime 8-12 minutes."),
+        "parameters": {"type": "object", "properties": {
+            "text": {"type": "string"},
+        }, "required": ["text"]},
+    }},
+    {"type": "function", "function": {
+        "name": "publish_shot_script",
+        "description": ("Publish a full pilot/episode script broken down by sequences and shots: "
+                        "validates the structure, builds a vector text PDF, publishes it as a "
+                        "version and attaches the .md + PDF to the task as a publication."),
+        "parameters": {"type": "object", "properties": {
+            "project": {"type": "string"},
+            "entity": {"type": "string"},
+            "text": {"type": "string", "description": "Markdown with ## S01 ... and **S01-01 · WS · 8 c**"},
+            "title": {"type": "string"},
+            "task_name": {"type": "string"},
+            "task_type": {"type": "string", "default": "Script"},
+            "bot": {"type": "string"},
+            "comment": {"type": "string"},
+            "attach_files": {"type": "array", "items": {"type": "string"}},
+        }, "required": ["project", "entity", "text"]},
     }},
     {"type": "function", "function": {
         "name": "synx_attach_files",
@@ -2160,6 +2201,34 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
                 font_size=float(args.get("font_size") or 10.5),
                 progress=progress)
             return result, [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
+    if name == "check_shot_script":
+        try:
+            return script_tools.validate_shot_script(args.get("text") or ""), [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
+    if name == "publish_shot_script":
+        try:
+            text = args.get("text") or ""
+            checks = script_tools.validate_shot_script(text)
+            if not checks.get("ok"):
+                return {"error": "shot_script_invalid", **checks}, [], None
+            args, err = _publish_guard(session_id or "default", args)
+            if err:
+                return err, [], None
+            result = doc_flow.publish_text_document(
+                args.get("project") or "",
+                args.get("entity") or args.get("shot") or "",
+                text=text,
+                title=args.get("title") or "Сценарий по шотам",
+                task_name=args.get("task_name") or "pilot_shot_script",
+                task_type=args.get("task_type") or "Script",
+                bot_login=args.get("bot"),
+                comment=args.get("comment") or "",
+                attach_files=args.get("attach_files") or [],
+                progress=progress)
+            return {**result, "script_check": checks}, [], None
         except Exception as exc:
             return {"error": str(exc)}, [], None
     if name == "synx_attach_files":
