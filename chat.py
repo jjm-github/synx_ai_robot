@@ -1076,6 +1076,20 @@ def _news_request(text: str) -> dict[str, Any] | None:
             "date_to": d1.isoformat(), "label": label}
 
 
+def _show_request(text: str) -> str | None:
+    """"покажи картинку" / "покажи исходник" — return 'last' or 'source'."""
+    low = (text or "").lower()
+    if not re.search(r"(покажи|показать|выведи|открой)", low):
+        return None
+    if re.search(r"(нарисуй|сгенерир|сделай\s+(?:мне\s+)?(?:картинк|изображени|кадр))", low):
+        return None
+    if re.search(r"(исходник|референс|оригинал|source|reference)", low):
+        return "source"
+    if re.search(r"(картинк|изображени|кадр|фото|image|результат)", low):
+        return "last"
+    return None
+
+
 def _entity_create_request(text: str) -> dict[str, Any] | None:
     low = (text or "").lower()
     if "созда" not in low or not ("ассет" in low or "шот" in low or "shot" in low):
@@ -2075,6 +2089,47 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
     content = ""
     tool_used = False
     ai_error = False
+
+    # "Покажи картинку / исходник" must actually attach an image, not describe it.
+    show = _show_request(text or "")
+    if show:
+        content = ""
+        try:
+            if show == "source":
+                focus = db.get_chat_focus(session_id) or {}
+                shot = str(focus.get("shot") or "")
+                if not shot:
+                    raise ValueError("не знаю, какой исходник показать: назови шот и версию")
+                emit({"type": "stage", "text": "Беру исходник версии в synx..."})
+                ref = synx_tools.prepare_reference(
+                    str(focus.get("project") or ""), shot, focus.get("version"), "middle")
+                info = ref.get("version") or {}
+                IMAGES.mkdir(parents=True, exist_ok=True)
+                name = f"source_{shot}_{info.get('version') or 'v'}.png"
+                dst = IMAGES / name
+                shutil.copy2(ref["path"], dst)
+                generated = [{"name": name, "path": str(dst),
+                              "url": f"/api/chat/file/images/{name}"}]
+                content = (f"Вот исходник **{info.get('project') or focus.get('project')}/"
+                           f"{info.get('entity') or shot} {info.get('version') or ''}** "
+                           f"({ref.get('width')}×{ref.get('height')}).")
+                if re.search(r"(позы|поза|не похоже|скелет)", (text or "").lower()):
+                    content += ("\n\nОбычный restyle в FLUX не сохраняет позы — для этого нужен "
+                                "pose-воркфлоу: OpenPose/ControlNet по скелету + генерация по нему.")
+            else:
+                imgs = publish_flow.last_generated_images(session_id, limit_messages=10)
+                if not imgs:
+                    content = "В этом чате пока нет сгенерированных картинок."
+                else:
+                    generated = imgs
+                    content = "Вот последняя сгенерированная картинка."
+        except Exception as exc:
+            content = f"Не смог показать изображение: {exc}"
+        emit({"type": "stage", "text": "Готово"})
+        db.add_chat_message(session_id, "assistant", content, generated=generated,
+                            usage=usage, playlist_text=None, progress=stages)
+        return {"messages": db.list_chat_messages(session_id), "usage": usage,
+                "generated": generated, "playlist_text": None, "stages": stages}
 
     # Create asset/shot requests ("создай ассет main_script типа Script...").
     ent = _entity_create_request(text or "")

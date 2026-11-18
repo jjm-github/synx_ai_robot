@@ -551,8 +551,12 @@ def add_chat_message(session_id: str, role: str, content: str,
 
 
 def list_chat_messages(session_id: str = "default", limit: int = 200) -> list[dict[str, Any]]:
-    rows = all("SELECT * FROM chat_messages WHERE session_id=? ORDER BY id ASC LIMIT ?",
-               (session_id, limit))
+    """Return the LAST `limit` messages of the session in chronological order."""
+    rows = all(
+        """SELECT * FROM (
+               SELECT * FROM chat_messages WHERE session_id=? ORDER BY id DESC LIMIT ?
+           ) ORDER BY id ASC""",
+        (session_id, int(limit)))
     for r in rows:
         for src, dst in (("images_json", "images"), ("generated_json", "generated"),
                          ("usage_json", "usage"), ("progress_json", "progress")):
