@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html as html_lib
 import json
 import re
 import shutil
@@ -114,13 +115,17 @@ PDF на стандартных страницах, проверит его и �
 
 ## Веб-поиск и LoRA
 
-Для вопросов про ComfyUI, LoRA, ноды, ошибки и решения воркфлоу используй
-`web_search` (DuckDuckGo MCP) и затем `web_fetch` по самому релевантному URL.
-Сначала ищи, потом читай страницу, и только затем отвечай конкретными шагами
-со ссылками. Не выдумывай названия нод и параметры. Для LoRA обычно нужны:
-`Load LoRA` (model/clip/lora_name/strength_model/strength_clip), цепочка
-нескольких Load LoRA, совместимость LoRA с базовой моделью и папка
-`ComfyUI/models/loras`.
+Интернет-поиск — стандартный навык. Любой информационный вопрос про ComfyUI,
+LoRA, ноды, модели, ошибки и решения воркфлоу решай через `web_search`
+(DuckDuckGo MCP) и `web_fetch` по самому релевантному URL. Сначала ищи, потом
+читай страницу, затем отвечай конкретными шагами со ссылками.
+
+- Не отвечай «я не умею искать в интернете» — инструмент доступен.
+- Не выдумывай названия нод и параметры: если не уверен, ищи.
+- Для LoRA обычно нужны: `Load LoRA` (model/clip/lora_name/strength_model/
+  strength_clip), цепочка нескольких Load LoRA, совместимость LoRA с базовой
+  моделью и папка `ComfyUI/models/loras`.
+- Хватает 1–2 поисков и 1–2 страниц; не зацикливайся на инструментах.
 
 ## ComfyUI MCP
 
@@ -1368,6 +1373,137 @@ def _ddg_server() -> str:
     return "ddg-search"
 
 
+WEB_HINT_RE = re.compile(
+    r"(в\s+интернете|в\s+сети|из\s+интернета|погугл|загугл|web[\s-]*search|онлайн)", re.I)
+SEARCH_VERB_RE = re.compile(r"(поищи|найди|ищи|search|проверь)", re.I)
+TECH_TOPIC_RE = re.compile(
+    r"(comfy|комфи|lora|loras|лора|лоры|нод[аыуе]?|node|workflow|воркфлоу|"
+    r"модел[ьия]|model|flux|sdxl|sd1\.5|stable\s*diffusion|hunyuan|wan2|"
+    r"upscal|апскейл|inpaint|controlnet|ipadapter|ip-adapter|safetensors)", re.I)
+SYNX_TOPIC_RE = re.compile(
+    r"(synx|синкс|верси[яиюей]|шот[аыуе]?|ассет|задач[аиуей]|публик|publish|проект)", re.I)
+QUESTION_RE = re.compile(
+    r"(^\s*(как|что|какой|какие|какая|каков|почему|зачем|можно\s+ли|где|сколько|чем|"
+    r"подскажи|расскажи|объясни|есть\s+ли|существуют\s+ли)|\?\s*$)", re.I)
+
+
+def _web_request(text: str) -> bool:
+    """True when the message asks for internet research."""
+    t = (text or "").strip()
+    if not t:
+        return False
+    if WEB_HINT_RE.search(t):
+        return True
+    if SEARCH_VERB_RE.search(t) and TECH_TOPIC_RE.search(t) and not SYNX_TOPIC_RE.search(t):
+        return True
+    if re.search(r"(что\s+пишут|какие\s+(?:есть\s+)?(?:lora|loras|лора|лоры))", t, re.I):
+        return True
+    if TECH_TOPIC_RE.search(t) and QUESTION_RE.search(t) and not SYNX_TOPIC_RE.search(t):
+        return True
+    return False
+
+
+def _web_queries(text: str, ai: Any, usage: dict[str, int]) -> list[str]:
+    queries: list[str] = []
+    try:
+        raw, u = ai.chat([
+            {"role": "system", "content": (
+                "Extract 1 or 2 short web search queries for the user request. "
+                "Each query: max 12 words, keep exact product/node/model names, "
+                "add 'ComfyUI' when the question is about it. "
+                "Return ONLY a JSON array of strings, e.g. [\"ComfyUI Flux LoRA support\"].")},
+            {"role": "user", "content": (text or "")[:2000]},
+        ])
+        usage["input"] += int(u.get("input") or 0)
+        usage["output"] += int(u.get("output") or 0)
+        m = re.search(r"\[.*?\]", raw or "", re.S)
+        if m:
+            arr = json.loads(m.group(0))
+            queries = [str(x).strip() for x in arr if str(x).strip()][:2]
+    except Exception:
+        pass
+    if not queries:
+        q = re.sub(r"(поищи|найди|ищи|погугли|загугли|пожалуйста|в\s+интернете)", " ",
+                   text or "", flags=re.I)
+        q = " ".join(q.split())[:220]
+        queries = [q] if q else [(text or "")[:220]]
+    return queries
+
+
+def _clean_html(raw: str) -> str:
+    s = re.sub(r"(?is)<(script|style|noscript|svg)[^>]*>.*?</\1>", " ", raw or "")
+    s = re.sub(r"(?is)<br\s*/?>", "\n", s)
+    s = re.sub(r"(?is)</(p|div|section|article|li|h[1-6]|tr|td)>", "\n", s)
+    s = re.sub(r"(?s)<[^>]+>", " ", s)
+    s = html_lib.unescape(s)
+    s = re.sub(r"[ \t\r\f\v]+", " ", s)
+    s = re.sub(r"\n\s*\n+", "\n\n", s)
+    return s.strip()
+
+
+def _fetch_page(url: str, max_length: int = 6000) -> str:
+    """Fetch a page through DuckDuckGo MCP, falling back to a direct request."""
+    text = ""
+    try:
+        f = mcp_runtime.call(_ddg_server(), "fetch_content",
+                             {"url": url, "max_length": max_length, "parse_mode": "markdown"},
+                             timeout=60)
+        text = _mcp_text(f)
+    except Exception as exc:
+        text = f"Error: {exc}"
+    low = text.strip().lower()
+    if len(text.strip()) < 300 or low.startswith("error"):
+        try:
+            r = requests.get(url, timeout=20, headers={
+                "User-Agent": ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                               "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"),
+                "Accept-Language": "en-US,en;q=0.8,ru;q=0.7",
+            })
+            if r.status_code < 400 and r.text:
+                cleaned = _clean_html(r.text)
+                if len(cleaned) > len(text.strip()):
+                    text = cleaned
+        except Exception as exc:
+            if not text.strip() or low.startswith("error"):
+                text = f"Error: {exc}"
+    return text[:max_length]
+
+
+def _web_research(text: str, ai: Any, emit: Any, usage: dict[str, int]) -> dict[str, Any]:
+    server = _ddg_server()
+    queries = _web_queries(text, ai, usage)
+    blocks: list[str] = []
+    sources: list[str] = []
+    results: list[dict[str, Any]] = []
+    for q in queries:
+        emit({"type": "stage", "text": f"Поиск: {q[:70]}"})
+        try:
+            d = mcp_runtime.call(server, "search", {"query": q, "max_results": 6}, timeout=60)
+            txt = _mcp_text(d)
+        except Exception as exc:
+            txt = f"search failed: {exc}"
+        results.append({"query": q, "results": txt[:6000]})
+        blocks.append(f"### Результаты поиска: {q}\n{txt[:6000]}")
+        for url in re.findall(r"URL:\s*(https?://\S+)", txt):
+            if url not in sources:
+                sources.append(url)
+    pages: list[dict[str, Any]] = []
+    good = 0
+    for url in sources[:4]:
+        if good >= 2:
+            break
+        emit({"type": "stage", "text": f"Читаю {url[:70]}..."})
+        c = _fetch_page(url, 6000)
+        if len(c.strip()) >= 300 and not c.strip().lower().startswith("error"):
+            pages.append({"url": url, "content": c})
+            blocks.append(f"### Страница: {url}\n{c}")
+            good += 1
+        else:
+            pages.append({"url": url, "error": c[:200]})
+    return {"queries": queries, "results": results, "sources": sources,
+            "pages": pages, "context": "\n\n".join(blocks)[:24000]}
+
+
 def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
                   progress=None, session_id: str | None = None
                   ) -> tuple[Any, list[dict[str, Any]], str | None]:
@@ -1847,6 +1983,50 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
         return {"messages": db.list_chat_messages(session_id), "usage": usage,
                 "generated": [], "playlist_text": None, "stages": stages}
 
+    # Internet research is a standard skill: explicit requests ("поищи в
+    # интернете") and technical questions about ComfyUI/LoRA are answered from
+    # live search results plus the most relevant pages, not from model memory.
+    if _web_request(text or ""):
+        content = ""
+        try:
+            emit({"type": "stage", "text": "Ищу в интернете..."})
+            research = _web_research(text or "", ai, emit, usage)
+            if not research.get("sources"):
+                content = ("Поиск не дал результатов. Проверь формулировку или сеть, "
+                           "затем попробуй снова.")
+            elif ai.ready:
+                emit({"type": "stage", "text": "Формулирую ответ по источникам..."})
+                material = research.get("context") or ""
+                system = (
+                    "Ты — технический ассистент по ComfyUI, LoRA, нодам и воркфлоу. "
+                    "Отвечай по-русски, кратко и по шагам. Используй ТОЛЬКО факты из "
+                    "предоставленных результатов поиска и страниц; если факта там нет — "
+                    "честно скажи, чего не хватает. Не выдумывай названия нод и параметры. "
+                    "В конце добавь раздел «Источники» со ссылками из найденных URL. "
+                    "Не пиши, что не умеешь искать в интернете.")
+                prompt = (f"Запрос пользователя:\n{text}\n\n"
+                          f"Найденные материалы:\n{material}")
+                answer, u = ai.chat([{"role": "system", "content": system},
+                                     {"role": "user", "content": prompt}])
+                usage["input"] += int(u.get("input") or 0)
+                usage["output"] += int(u.get("output") or 0)
+                content = (answer or "").strip()
+                if not content:
+                    content = "Нашёл материалы, но не смог сформулировать ответ."
+                if not re.search(r"https?://", content):
+                    content += ("\n\nИсточники:\n" + "\n".join(
+                        f"- {u}" for u in research.get("sources", [])[:8]))
+            else:
+                content = ("Нашёл в интернете:\n" + "\n".join(
+                    f"- {u}" for u in research.get("sources", [])[:8]))
+        except Exception as exc:
+            content = f"Не удалось выполнить поиск в интернете: {exc}"
+        emit({"type": "stage", "text": "Готово"})
+        db.add_chat_message(session_id, "assistant", content, generated=[],
+                            usage=usage, playlist_text=None, progress=stages)
+        return {"messages": db.list_chat_messages(session_id), "usage": usage,
+                "generated": [], "playlist_text": None, "stages": stages}
+
     # Explicit "find version X and generate from it" requests are handled
     # deterministically: lookup + reference frame + FLUX.3 restyle in one pass.
     version_req = _version_request(text or "")
@@ -1887,9 +2067,10 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
         return {"messages": db.list_chat_messages(session_id), "usage": usage,
                 "generated": generated, "playlist_text": None, "stages": stages}
 
-    seen_calls: set[str] = set()
+    seen_calls: dict[str, int] = {}
+    stop_tools = False
     try:
-        for _ in range(8):
+        for _step in range(10):
             emit({"type": "stage", "text": "Думаю..."})
             msg, u = ai.chat_message(history, tools=TOOLS)
             usage["input"] += u.get("input", 0)
@@ -1909,13 +2090,15 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
                 except Exception:
                     args = {}
                 signature = name + json.dumps(args, ensure_ascii=False, sort_keys=True)
-                if signature in seen_calls:
+                seen_calls[signature] = seen_calls.get(signature, 0) + 1
+                repeats = seen_calls[signature]
+                if repeats > 1:
                     result = {"error": "duplicate_tool_call",
-                              "message": "Этот вызов уже выполнен. Используй предыдущий результат; "
-                                         "не повторяй его. Если данных достаточно — переходи к "
-                                         "generate_image / generate_from_synx_version или ответу."}
+                              "message": "Этот вызов уже выполнен. Используй предыдущий результат "
+                                         "и не повторяй его."}
+                    if repeats >= 2:
+                        stop_tools = True
                 else:
-                    seen_calls.add(signature)
                     try:
                         emit({"type": "stage", "text": f"Инструмент: {name}"})
                         result, gen, pl = _execute_tool(name, args, images, progress=emit,
@@ -1927,9 +2110,28 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
                         result = {"error": str(exc)}
                 history.append({"role": "tool", "tool_call_id": call.get("id") or name,
                                 "content": json.dumps(result, ensure_ascii=False)[:12000]})
-        else:
-            content = ("Слишком много шагов. Уточни проект, шот и версию. "
-                       "Для генерации из версии используй один вызов generate_from_synx_version.")
+                if stop_tools:
+                    break
+            if stop_tools:
+                break
+        if not content:
+            # The tool loop is over: answer from what was already collected
+            # instead of dropping the request with a loop-limit message.
+            try:
+                emit({"type": "stage", "text": "Формулирую ответ..."})
+                history.append({"role": "system", "content": (
+                    "Инструменты отключены. Сформулируй ответ пользователю по уже "
+                    "полученным результатам. Если данных не хватает — скажи, чего "
+                    "именно не хватает, и предложи следующий шаг.")})
+                msg, u = ai.chat_message(history)
+                usage["input"] += u.get("input", 0)
+                usage["output"] += u.get("output", 0)
+                content = (msg.get("content") or "").strip()
+            except Exception:
+                pass
+        if not content:
+            content = ("Не смог закончить за отведённое число шагов. "
+                       "Уточни запрос или попроси конкретное действие.")
     except AIError as exc:
         ai_error = True
         content = f"AI недоступен: {exc}"
