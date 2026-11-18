@@ -118,6 +118,15 @@ class SynxClient:
             raise SynxError(f"create entity: {r.status_code} {r.text[:500]}")
         return r.json()
 
+    def delete_entity(self, entity_id: str) -> dict[str, Any]:
+        r = self.s.delete(f"{self.base}/api/entities/{entity_id}", timeout=60)
+        if r.status_code >= 400:
+            raise SynxError(f"delete entity {entity_id}: {r.status_code} {r.text[:400]}")
+        try:
+            return r.json()
+        except Exception:
+            return {"ok": True}
+
     def update_entity(self, entity_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         r = self.s.patch(f"{self.base}/api/entities/{entity_id}", json=payload, timeout=60)
         if r.status_code >= 400:

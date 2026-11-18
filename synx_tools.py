@@ -464,6 +464,60 @@ def create_task(project: str, shot: str, task_name: str, task_type: str,
             "url": _entity_url(c.base, p.get("alias"), e)}
 
 
+def entities(project: str, entity_kind: str | None = None,
+             query: str | None = None, limit: int = 500) -> dict[str, Any]:
+    """List project entities with counts (for review/cleanup before deletion)."""
+    c = client()
+    p = _project(c, project)
+    rows = c.entities(p["id"])
+    q = str(query or "").strip().lower()
+    out = []
+    for e in rows:
+        if entity_kind and e.get("entity_kind") != entity_kind:
+            continue
+        if q and q not in str(e.get("name") or "").lower() \
+                and q not in str(e.get("display_name") or "").lower():
+            continue
+        out.append({
+            "id": e.get("id"), "name": e.get("name"),
+            "display_name": e.get("display_name"),
+            "entity_kind": e.get("entity_kind"),
+            "asset_type": e.get("asset_type"),
+            "status": e.get("status"),
+            "created_by": e.get("created_by"),
+            "versions_count": e.get("versions_count"),
+            "tasks_count": e.get("tasks_count"),
+            "sequence_name": e.get("sequence_name"),
+        })
+    return {"project": p.get("alias"), "count": len(out), "items": out[:int(limit)]}
+
+
+def delete_entity(project: str, name: str | None = None,
+                  entity_id: str | None = None, force: bool = False) -> dict[str, Any]:
+    """Delete an asset/shot. Refuses non-empty entities unless force=True."""
+    c = client()
+    p = _project(c, project)
+    if entity_id:
+        e = next((x for x in c.entities(p["id"]) if x.get("id") == entity_id), None)
+        if not e:
+            raise ValueError(f"entity not found by id: {entity_id}")
+    else:
+        e = find_entity(project, name or "")
+    versions = c.versions(e["id"])
+    tasks_list = c.tasks(e["id"])
+    if (versions or tasks_list) and not force:
+        raise ValueError(
+            f"у сущности {e.get('name')} есть версии ({len(versions)}) и задачи "
+            f"({len(tasks_list)}). Удалять только с force=true, предварительно показав "
+            f"пользователю, что будет удалено.")
+    c.delete_entity(e["id"])
+    return {"ok": True, "deleted": {"id": e.get("id"), "name": e.get("name"),
+                                    "display_name": e.get("display_name"),
+                                    "entity_kind": e.get("entity_kind"),
+                                    "asset_type": e.get("asset_type")},
+            "versions": len(versions), "tasks": len(tasks_list)}
+
+
 def tasks(project: str, status: str | None = None, limit: int = 300) -> dict[str, Any]:
     c = client()
     p = _project(c, project)

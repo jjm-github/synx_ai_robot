@@ -141,6 +141,10 @@ PDF на стандартных страницах, проверит его и �
 - «Продолжай» = продолжай прежний план до конца, включая публикацию.
 - Бота выбирай сам по скилам (AI/Pipeline — генерация, текст/сценарий — любой
   AI). Уточняй исполнителя только при явной неоднозначности.
+- Удаление сущностей — только по явной просьбе («удали ассет/шот X», «удали все
+  ассеты, что создал робот»). Сначала найди и покажи список (id, имя, тип,
+  версии/задачи), затем вызывай `synx_delete_entity`. Непустые сущности
+  (с версиями/задачами) удаляй только с `force=true` после явного подтверждения.
 - «Пересобери PDF версии vNNN» = содержимое ИМЕННО этой версии, не склейка
   других документов. Сначала прочитай версию (PDF → pdftotext, видео → кадры),
   затем собери текстовый PDF с тем же содержимым и опубликуй новой версией.
@@ -571,6 +575,37 @@ SYNX_TOOLS = [
             "description": "List valid task types for a synx project.",
             "parameters": {"type": "object", "properties": {"project": {"type": "string"}},
                            "required": ["project"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "synx_entities",
+            "description": ("List entities of a synx project (id, name, display_name, kind, "
+                            "asset_type, created_by, versions/tasks count). Use before bulk "
+                            "cleanup or to find an asset to delete."),
+            "parameters": {"type": "object", "properties": {
+                "project": {"type": "string"},
+                "entity_kind": {"type": "string", "enum": ["asset", "shot"]},
+                "query": {"type": "string", "description": "Substring of name/display name"},
+                "limit": {"type": "integer", "default": 500},
+            }, "required": ["project"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "synx_delete_entity",
+            "description": ("Delete an asset or shot from a synx project. Use ONLY on an explicit "
+                            "user request («удали ассет X»). Refuses entities with versions/tasks "
+                            "unless force=true; show the user what will be deleted first."),
+            "parameters": {"type": "object", "properties": {
+                "project": {"type": "string"},
+                "name": {"type": "string", "description": "Entity name, e.g. loc_ocean_seiner"},
+                "entity_id": {"type": "string"},
+                "force": {"type": "boolean", "default": False,
+                          "description": "Allow deleting an entity that has versions/tasks"},
+            }, "required": ["project"]},
         },
     },
     {
@@ -2033,6 +2068,20 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
                 args.get("entity_kind") or "asset", args.get("asset_type"),
                 args.get("info"), args.get("display_name"), args.get("cut_in"),
                 args.get("cut_out"), args.get("task_types"), args.get("skill_codes")), [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
+    if name == "synx_entities":
+        try:
+            return synx_tools.entities(
+                args.get("project") or "", args.get("entity_kind"),
+                args.get("query"), int(args.get("limit") or 500)), [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
+    if name == "synx_delete_entity":
+        try:
+            return synx_tools.delete_entity(
+                args.get("project") or "", args.get("name"),
+                args.get("entity_id"), bool(args.get("force"))), [], None
         except Exception as exc:
             return {"error": str(exc)}, [], None
     if name == "synx_set_task_status":
