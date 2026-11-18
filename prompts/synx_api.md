@@ -169,6 +169,20 @@ arguments; для схемы — `mcp_call` tool=describe_tool. Это лучш�
 `Comfy-Org/comfy-mcp` (локальный контроль и download по URL, без CivitAI-поиска)
 и `ConstantineB6/comfy-pilot` (редактирование live-графа, без загрузки моделей).
 
+## Веб-поиск (DuckDuckGo MCP)
+
+Включён `ddg-search` (nickclyde/duckduckgo-mcp-server). Инструменты:
+
+- `web_search` — поиск DuckDuckGo, `max_results`, `fetch_top`;
+- `web_fetch` — `fetch_content` страницы в text/markdown;
+- напрямую через MCP: `search`, `fetch_content`, `expand_link`.
+
+Используй для вопросов про ComfyUI/LoRA/ноды/ошибки/воркфлоу: сначала
+`web_search`, затем `web_fetch` лучшего URL, затем ответ с конкретными шагами
+и ссылками. Для LoRA: `Load LoRA` (model, clip, lora_name, strength_model,
+strength_clip), цепочка нескольких Load LoRA, папка `ComfyUI/models/loras`,
+совместимость LoRA с базовой моделью.
+
 ## ffmpeg
 
 ffmpeg/ffprobe установлены. MCP-инструменты включённых серверов вызываются

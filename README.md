@@ -257,6 +257,11 @@ checkpoints/loras/vae), `list_local_models`, `search_custom_nodes`,
 Для видео — `ffmpeg-skill` MCP (`probe`, `cut`, `fit`, `caption`, `graphics`).
 Для PDF проще прямой PIL-пайплайн.
 
+Для веб-поиска включён **`ddg-search`** (DuckDuckGo MCP):
+`web_search(query)` и `web_fetch(url)` в чате. Робот использует его для вопросов
+про ComfyUI, LoRA, ноды, ошибки и готовые решения воркфлоу: сначала ищет,
+затем читает страницу (`fetch_content`) и отвечает шагами со ссылками.
+
 Альтернативы ComfyUI MCP: официальный `Comfy-Org/comfy-mcp` (локальный контроль,
 download по URL) и `ConstantineB6/comfy-pilot` (редактирование live-графа).
 

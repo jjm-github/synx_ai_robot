@@ -112,6 +112,16 @@ PDF на стандартных страницах, проверит его и �
 достаточно — переходи к генерации или отвечай текстом. Для списков версий
 используй shot/version фильтры и limit не больше 50.
 
+## Веб-поиск и LoRA
+
+Для вопросов про ComfyUI, LoRA, ноды, ошибки и решения воркфлоу используй
+`web_search` (DuckDuckGo MCP) и затем `web_fetch` по самому релевантному URL.
+Сначала ищи, потом читай страницу, и только затем отвечай конкретными шагами
+со ссылками. Не выдумывай названия нод и параметры. Для LoRA обычно нужны:
+`Load LoRA` (model/clip/lora_name/strength_model/strength_clip), цепочка
+нескольких Load LoRA, совместимость LoRA с базовой моделью и папка
+`ComfyUI/models/loras`.
+
 ## ComfyUI MCP
 
 В программе включён MCP `comfyui-mcp` (artokun/comfyui-mcp). Это основной
@@ -655,7 +665,32 @@ MCP_TOOLS = [
     }},
 ]
 
-TOOLS = [IMAGE_TOOL, VERSION_GEN_TOOL, PDF_TOOL, PDF_RENDER_TOOL, VERIFY_PDF_TOOL, REPAIR_PDF_TOOL, DAILY_PDF_TOOL, PUBLISH_TOOL, FFMPEG_TOOL] + MCP_TOOLS + SYNX_TOOLS + FS_TOOLS
+WEB_TOOLS = [
+    {"type": "function", "function": {
+        "name": "web_search",
+        "description": ("Search the web through the enabled DuckDuckGo MCP. Use for ComfyUI/LoRA "
+                        "workflow questions, node errors, model usage and current docs. "
+                        "Set fetch_top=true to also read the first result as Markdown."),
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string"},
+            "max_results": {"type": "integer", "default": 8},
+            "fetch_top": {"type": "boolean", "default": False},
+            "max_length": {"type": "integer", "default": 8000},
+        }, "required": ["query"]},
+    }},
+    {"type": "function", "function": {
+        "name": "web_fetch",
+        "description": ("Fetch a web page through DuckDuckGo MCP and extract readable text/Markdown. "
+                        "Use after web_search for the most relevant URL."),
+        "parameters": {"type": "object", "properties": {
+            "url": {"type": "string"},
+            "max_length": {"type": "integer", "default": 8000},
+            "parse_mode": {"type": "string", "enum": ["text", "main", "markdown"], "default": "markdown"},
+        }, "required": ["url"]},
+    }},
+]
+
+TOOLS = [IMAGE_TOOL, VERSION_GEN_TOOL, PDF_TOOL, PDF_RENDER_TOOL, VERIFY_PDF_TOOL, REPAIR_PDF_TOOL, DAILY_PDF_TOOL, PUBLISH_TOOL, FFMPEG_TOOL] + WEB_TOOLS + MCP_TOOLS + SYNX_TOOLS + FS_TOOLS
 GEN_RE = re.compile(
     r"(нарисуй|сгенер|сгенерируй|сделай\s+(картин|изображ|кадр|арт)|"
     r"draw|generate\s+(an?\s+)?image|make\s+(an?\s+)?image|create\s+(an?\s+)?image)",
@@ -1313,6 +1348,26 @@ def _history_messages(session_id: str) -> list[dict[str, Any]]:
     return out
 
 
+def _mcp_text(result: dict[str, Any]) -> str:
+    res = result.get("result") or {}
+    parts = []
+    for c in res.get("content") or []:
+        if isinstance(c, dict) and c.get("type") == "text":
+            parts.append(str(c.get("text") or ""))
+    return "\n".join(parts)
+
+
+def _ddg_server() -> str:
+    try:
+        for s in mcp_manager.load_servers():
+            name = str(s.get("name") or "").lower()
+            if s.get("enabled") and ("ddg" in name or "duckduckgo" in name):
+                return str(s.get("name"))
+    except Exception:
+        pass
+    return "ddg-search"
+
+
 def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
                   progress=None, session_id: str | None = None
                   ) -> tuple[Any, list[dict[str, Any]], str | None]:
@@ -1504,6 +1559,37 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
                                    bool(args.get("base64_data"))), [], None
     if name == "fs_delete":
         return fs_tools.delete_path(args.get("path") or ""), [], None
+    if name == "web_search":
+        try:
+            server = _ddg_server()
+            q = args.get("query") or ""
+            d = mcp_runtime.call(server, "search",
+                                 {"query": q, "max_results": int(args.get("max_results") or 8)},
+                                 timeout=60)
+            text = _mcp_text(d)
+            urls = re.findall(r"URL:\s*(https?://\S+)", text)
+            fetched = None
+            if args.get("fetch_top") and urls:
+                max_len = int(args.get("max_length") or 8000)
+                f = mcp_runtime.call(server, "fetch_content",
+                                     {"url": urls[0], "max_length": max_len,
+                                      "parse_mode": "markdown"}, timeout=90)
+                fetched = {"url": urls[0], "content": _mcp_text(f)[:max_len]}
+            return {"query": q, "results": text[:14000], "sources": urls[:10],
+                    "fetched": fetched}, [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
+    if name == "web_fetch":
+        try:
+            server = _ddg_server()
+            max_len = int(args.get("max_length") or 8000)
+            d = mcp_runtime.call(server, "fetch_content",
+                                 {"url": args.get("url") or "", "max_length": max_len,
+                                  "parse_mode": args.get("parse_mode") or "markdown"},
+                                 timeout=90)
+            return {"url": args.get("url"), "content": _mcp_text(d)[:max_len]}, [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
     if name == "mcp_list_tools":
         try:
             server = args.get("server")
