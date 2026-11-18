@@ -14,6 +14,7 @@ from typing import Any
 import requests
 from PIL import Image
 
+import comfy_server
 import db
 import fs_tools
 import mcp_manager
@@ -137,6 +138,21 @@ LoRA, ноды, модели, ошибки и решения воркфлоу р
   strength_clip), цепочка нескольких Load LoRA, совместимость LoRA с базовой
   моделью и папка `ComfyUI/models/loras`.
 - Хватает 1–2 поисков и 1–2 страниц; не зацикливайся на инструментах.
+
+## ComfyUI сервер
+
+ComfyUI установлен локально; путь берётся из `comfy.root` (сейчас
+`/home/jaroslav/opt/ComfyUI`), API — `comfy.base_url`
+(`http://127.0.0.1:8199`). Робот умеет им управлять:
+
+- `comfyui_status` — путь установки, python, main.py, PID, лог, версия, GPU;
+- `comfyui_start` — запустить сервер и дождаться ответа API;
+- `comfyui_stop` — остановить (только по явной просьбе).
+
+Генерация (`generate_image`, `generate_from_synx_version`, конвейер) сама
+поднимает сервер, если он выключен. Если генерация упала с
+`Connection refused` — не проси пользователя запускать вручную: вызови
+`comfyui_status`, затем `comfyui_start` и повтори генерацию.
 
 ## ComfyUI MCP
 
@@ -681,6 +697,30 @@ MCP_TOOLS = [
     }},
 ]
 
+COMFY_SERVER_TOOLS = [
+    {"type": "function", "function": {
+        "name": "comfyui_status",
+        "description": ("Show where ComfyUI is installed (root, python, main.py), whether the "
+                        "server is running, its URL/port, PID, log path, version and GPU devices."),
+        "parameters": {"type": "object", "properties": {}},
+    }},
+    {"type": "function", "function": {
+        "name": "comfyui_start",
+        "description": ("Start the local ComfyUI server from its install directory and wait until "
+                        "the API responds. Use when generation fails with 'Connection refused'. "
+                        "Generation tools also start it automatically when it is down."),
+        "parameters": {"type": "object", "properties": {
+            "wait": {"type": "integer", "default": 120,
+                     "description": "Seconds to wait for the API to become ready"},
+        }},
+    }},
+    {"type": "function", "function": {
+        "name": "comfyui_stop",
+        "description": "Stop the local ComfyUI server. Only use when the user explicitly asks.",
+        "parameters": {"type": "object", "properties": {}},
+    }},
+]
+
 WEB_TOOLS = [
     {"type": "function", "function": {
         "name": "web_search",
@@ -706,7 +746,7 @@ WEB_TOOLS = [
     }},
 ]
 
-TOOLS = [IMAGE_TOOL, VERSION_GEN_TOOL, PDF_TOOL, PDF_RENDER_TOOL, VERIFY_PDF_TOOL, REPAIR_PDF_TOOL, DAILY_PDF_TOOL, PUBLISH_TOOL, FFMPEG_TOOL] + WEB_TOOLS + MCP_TOOLS + SYNX_TOOLS + FS_TOOLS
+TOOLS = [IMAGE_TOOL, VERSION_GEN_TOOL, PDF_TOOL, PDF_RENDER_TOOL, VERIFY_PDF_TOOL, REPAIR_PDF_TOOL, DAILY_PDF_TOOL, PUBLISH_TOOL, FFMPEG_TOOL] + COMFY_SERVER_TOOLS + WEB_TOOLS + MCP_TOOLS + SYNX_TOOLS + FS_TOOLS
 GEN_RE = re.compile(
     r"(нарисуй|сгенер|сгенерируй|сделай\s+(картин|изображ|кадр|арт)|"
     r"draw|generate\s+(an?\s+)?image|make\s+(an?\s+)?image|create\s+(an?\s+)?image)",
@@ -755,6 +795,13 @@ def _submit(workflow: dict[str, Any], cfg: dict[str, Any], out_dir: Path,
             progress=None) -> list[Path]:
     if progress:
         progress({"type": "stage", "text": "Отправляю workflow в ComfyUI..."})
+    if not comfy_server.status().get("running"):
+        if progress:
+            progress({"type": "stage",
+                      "text": f"ComfyUI не запущен — запускаю {comfy_server.install_root()}"})
+        started = comfy_server.ensure(progress=progress)
+        if not started.get("running") and started.get("error"):
+            raise AIError("ComfyUI не запустился: " + str(started["error"]))
     base = str(cfg["comfy"].get("base_url") or "http://127.0.0.1:8199").rstrip("/")
     r = requests.post(f"{base}/prompt", json={"prompt": workflow,
                       "client_id": f"chat-{uuid.uuid4().hex[:8]}"}, timeout=60)
@@ -1238,14 +1285,7 @@ def _workflow_ref_request(text: str, session_id: str = "default") -> dict[str, A
 
 
 def _comfy_alive() -> bool:
-    try:
-        base = str(load_config().get("comfy", {}).get("base_url") or "")
-        if not base:
-            return False
-        r = requests.get(base.rstrip("/") + "/system_stats", timeout=3)
-        return r.status_code < 400
-    except Exception:
-        return False
+    return bool(comfy_server.status().get("running"))
 
 
 def _version_request(text: str) -> dict[str, Any] | None:
@@ -1554,6 +1594,11 @@ def _web_request(text: str) -> bool:
         return True
     if re.search(r"(что\s+пишут|какие\s+(?:есть\s+)?(?:lora|loras|лора|лоры))", t, re.I):
         return True
+    # Local ComfyUI server questions are answered by comfyui_status, not search.
+    if re.search(r"comfy(?:ui)?", t, re.I) and re.search(
+            r"(установлен|запущен|запустить|сервер|порт|статус|лог|pid|верси|папк|путь|"
+            r"connection\s*refused|не\s+запуска)", t, re.I):
+        return False
     if TECH_TOPIC_RE.search(t) and QUESTION_RE.search(t) and not SYNX_TOPIC_RE.search(t):
         return True
     return False
@@ -1664,6 +1709,13 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
                   progress=None, session_id: str | None = None
                   ) -> tuple[Any, list[dict[str, Any]], str | None]:
     """Returns (tool_result, generated_images, playlist_text)."""
+    if name == "comfyui_status":
+        return comfy_server.status(), [], None
+    if name == "comfyui_start":
+        wait = int(args.get("wait") or 0) or None
+        return comfy_server.start(wait=wait, progress=progress), [], None
+    if name == "comfyui_stop":
+        return comfy_server.stop(), [], None
     if name == "generate_image":
         prompt = (args.get("prompt") or "").strip() or "A detailed cinematic image"
         neg = args.get("negative") or ""
@@ -2227,6 +2279,10 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
                 wf_req["project"], wf_req["shot"], wf_req.get("version"), "middle")
             info = ref.get("version") or {}
             comfy = _comfy_alive()
+            if not comfy and comfy_server.status().get("auto_start"):
+                emit({"type": "stage", "text": "ComfyUI не запущен — запускаю сервер..."})
+                started = comfy_server.ensure(progress=emit)
+                comfy = bool(started.get("running"))
             lines = [
                 f"Взял за основу **{info.get('project') or wf_req['project']}/"
                 f"{info.get('shot') or wf_req['shot']} "
@@ -2241,8 +2297,11 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
                           "могу собрать pose-воркфлоу через MCP (`create_workflow`) и добавить "
                           "ControlNet-ноды, но это отдельная сборка. Подтверди — и я начну."]
             else:
-                lines += ["", "**ComfyUI не запущен** на `127.0.0.1:8199`, поэтому воркфлоу "
-                          "и первые кадры сейчас не собрать. Запусти ComfyUI и повтори запрос — "
+                st = comfy_server.status()
+                lines += ["", f"**ComfyUI не запущен** (`{st.get('url')}`), автозапуск не удался.",
+                          f"- Установлен: `{st.get('install_root')}`",
+                          f"- Лог: `{st.get('log')}`",
+                          "Проверь лог или укажи `comfy.root` в настройках, затем повтори запрос — "
                           "возьму этот же референс."]
             content = "\n".join(lines)
         except Exception as exc:

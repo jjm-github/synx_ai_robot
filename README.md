@@ -119,7 +119,21 @@ output_dir ~/opt/ComfyUI/output
 ```
 
 Если ComfyUI запущен с другими `--input-directory/--output-directory`,
-пропиши их в настройках. Встроенные workflow-билдеры:
+пропиши их в настройках.
+
+Робот знает, где установлен ComfyUI, и умеет управлять сервером
+(`comfy.root`, `comfy.base_url`):
+
+- `comfyui_status` — путь установки, `main.py`, python, PID, лог, версия, GPU;
+- `comfyui_start` — запуск сервера и ожидание ответа API;
+- `comfyui_stop` — остановка (только по явной просьбе);
+- генерация и конвейер **сами поднимают сервер**, если он выключен.
+
+Запуск: `/home/jaroslav/opt/ComfyUI/.venv/bin/python main.py --listen 127.0.0.1
+--port 8199`, лог — `data/logs/comfyui.log`. Автозапуск и таймаут настраиваются
+в `comfy.auto_start` и `comfy.start_timeout_sec`.
+
+Встроенные workflow-билдеры:
 
 - **FLUX.3 Klein i2v** — перерисовка/стилизация кадра по референсу;
 - **FLUX.3 Klein t2i** — генерация кадра с нуля;

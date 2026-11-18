@@ -40,6 +40,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "output_dir": "~/opt/ComfyUI/output",
         "workflow_path": "",
         "timeout_sec": 1800,
+        "auto_start": True,
+        "start_timeout_sec": 120,
+        "launch_python": ".venv/bin/python",
+        "launch_args": ["main.py", "--listen", "{host}", "--port", "{port}"],
+        "log_path": "data/logs/comfyui.log",
         "models": {
             "unet_flux3": "flux3-image-klein-int8-convrot.safetensors",
             "clip_flux3": "qwen3vl_4b_int8_convrot.safetensors",

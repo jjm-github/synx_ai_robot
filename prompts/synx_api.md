@@ -151,6 +151,20 @@ Daily PDF (базовый навык):
   «текст на 20% меньше», `image_valign=center` при «по центру/по вертикали»,
   `background=#000000` для чёрных страниц.
 
+## ComfyUI сервер
+
+ComfyUI установлен в `comfy.root` (по умолчанию `/home/jaroslav/opt/ComfyUI`),
+API — `comfy.base_url` (`http://127.0.0.1:8199`). Управление:
+
+- `comfyui_status` — путь установки, main.py, python, PID, лог, версия, GPU;
+- `comfyui_start` — запуск `main.py --listen 127.0.0.1 --port 8199` с ожиданием API;
+- `comfyui_stop` — остановка по явной просьбе;
+- генерация и конвейер автоматически поднимают сервер, если он выключен.
+
+При ошибке `Connection refused` не проси пользователя запускать вручную:
+`comfyui_status` → `comfyui_start` → повтори генерацию. Лог:
+`data/logs/comfyui.log`.
+
 ## ComfyUI MCP
 
 Включён `comfyui-mcp` (artokun/comfyui-mcp, 41 инструмент):

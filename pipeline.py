@@ -11,6 +11,7 @@ from typing import Any
 
 import requests
 
+import comfy_server
 import db
 from config import load_bots, load_config
 from links import task_version_url
@@ -46,6 +47,8 @@ class ComfyRunner:
         self.input_dir = Path(str(cfg["comfy"].get("input_dir") or "")).expanduser()
 
     def run(self, task: dict[str, Any], work_dir: Path) -> Path:
+        if not comfy_server.status().get("running"):
+            comfy_server.ensure()
         workflow = task.get("workflow_json")
         comfy_image = (task.get("source_json") or {}).get("comfy_image")
         if not workflow:
