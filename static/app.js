@@ -326,11 +326,47 @@
       navigator.clipboard.writeText(text).then(function () { toast("Скопировано в буфер обмена"); }, function () { fallbackCopy(text); });
     } else fallbackCopy(text);
   }
+  function selectedText() {
+    var sel = window.getSelection();
+    return sel ? String(sel.toString() || "").trim() : "";
+  }
+  // Copy works with any keyboard layout: use e.code (physical key), not e.key.
+  document.addEventListener("keydown", function (e) {
+    var mod = e.ctrlKey || e.metaKey;
+    if (!mod || e.altKey) return;
+    var isCopy = (e.code === "KeyC" && !e.shiftKey) ||
+                 (e.code === "Insert" && !e.shiftKey);
+    if (!isCopy) return;
+    var t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) {
+      if (t.type === "password") return;
+      var start = t.selectionStart, end = t.selectionEnd;
+      if (start != null && end != null && end > start) {
+        e.preventDefault();
+        copyText(t.value.slice(start, end));
+      }
+      return;
+    }
+    if (t && t.isContentEditable) return;
+    var sel = selectedText();
+    if (!sel) return;
+    e.preventDefault();
+    copyText(sel);
+  });
   function fallbackCopy(text) {
+    var sel = window.getSelection();
+    var saved = [];
+    if (sel) {
+      for (var i = 0; i < sel.rangeCount; i++) saved.push(sel.getRangeAt(i).cloneRange());
+    }
     var ta = document.createElement("textarea"); ta.value = text; ta.style.position = "fixed"; ta.style.left = "-9999px";
     document.body.appendChild(ta); ta.select();
     try { document.execCommand("copy"); toast("Скопировано"); } catch (e) { toast("Не удалось скопировать", true); }
     document.body.removeChild(ta);
+    if (sel && saved.length) {
+      sel.removeAllRanges();
+      saved.forEach(function (r) { sel.addRange(r); });
+    }
   }
   $("chat-messages").addEventListener("click", function (e) {
     var cp = e.target.closest("[data-copy-playlist]");
@@ -351,6 +387,14 @@
     var text = (txt.innerText || txt.textContent || "").trim();
     var isUser = msg.classList.contains("user");
     var items = [];
+    var selected = selectedText();
+    if (selected) {
+      items.push({label: "Копировать выделенное", fn: function () { copyText(selected); }});
+      items.push({label: "Копировать выделенное как цитату", fn: function () {
+        copyText(selected.split("\n").map(function (line) { return "> " + line; }).join("\n"));
+      }});
+      items.push({sep: true});
+    }
     var link = e.target.closest("a[href]");
     if (link) {
       var href = link.getAttribute("href") || "";
