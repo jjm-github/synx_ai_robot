@@ -28,7 +28,7 @@ from links import task_version_url
 from plan_md import save_plan_markdown
 from chat import (IMAGES as CHAT_IMAGES, UPLOADS as CHAT_UPLOADS,
                   chat_turn, chat_export_markdown, generate_image,
-                  get_chat_job, start_chat_job)
+                  get_chat_job, start_chat_job, stop_chat_job)
 from pipeline import manager
 from synx import SynxClient, SynxError
 
@@ -691,6 +691,14 @@ def chat_send(body: ChatSendBody):
 @app.get("/api/chat/jobs/{job_id}")
 def chat_job(job_id: str):
     job = get_chat_job(job_id)
+    if not job:
+        raise HTTPException(404, "job not found")
+    return job
+
+
+@app.post("/api/chat/jobs/{job_id}/stop")
+def chat_job_stop(job_id: str):
+    job = stop_chat_job(job_id)
     if not job:
         raise HTTPException(404, "job not found")
     return job

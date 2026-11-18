@@ -511,3 +511,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 /* Text selection everywhere in chat history */
 .msg, .msg * , .chat-messages details, .chat-messages summary, .chat-messages pre, .chat-messages code, .chat-messages table { user-select: text; -webkit-user-select: text; }
+
+#chat-stop.hidden { display: none; }
+#chat-stop { font-weight: 600; }

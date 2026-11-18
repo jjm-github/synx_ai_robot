@@ -2066,11 +2066,12 @@ def chat_export_markdown(session_id: str = "default") -> dict[str, Any]:
 
 
 def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = None,
-              progress=None) -> dict[str, Any]:
+              progress=None, job: dict[str, Any] | None = None) -> dict[str, Any]:
     images = images or []
     stages: list[dict[str, Any]] = []
 
     def emit(evt: dict[str, Any]):
+        _check_cancel(job or {})
         evt = dict(evt)
         evt["seq"] = len(stages) + 1
         stages.append(evt)
@@ -2413,6 +2414,8 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
     try:
         for _step in range(10):
             emit({"type": "stage", "text": "Думаю..."})
+            if _step:
+                _check_cancel(job or {})
             msg, u = ai.chat_message(history, tools=TOOLS)
             usage["input"] += u.get("input", 0)
             usage["output"] += u.get("output", 0)
@@ -2447,6 +2450,8 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
                         generated.extend(gen)
                         if pl:
                             playlist_text = pl
+                    except ChatCancelled:
+                        raise
                     except Exception as exc:
                         result = {"error": str(exc)}
                 history.append({"role": "tool", "tool_call_id": call.get("id") or name,
@@ -2473,6 +2478,8 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
         if not content:
             content = ("Не смог закончить за отведённое число шагов. "
                        "Уточни запрос или попроси конкретное действие.")
+    except ChatCancelled as exc:
+        content = str(exc)
     except AIError as exc:
         ai_error = True
         content = f"AI недоступен: {exc}"
@@ -2525,6 +2532,15 @@ _JOBS: dict[str, dict[str, Any]] = {}
 _JOBS_LOCK = threading.Lock()
 
 
+class ChatCancelled(RuntimeError):
+    """Raised inside a chat job when the user presses «Стоп»."""
+
+
+def _check_cancel(job: dict[str, Any]) -> None:
+    if job.get("cancel"):
+        raise ChatCancelled("Прервано пользователем")
+
+
 def start_chat_job(session_id: str, text: str, images: list[dict[str, Any]]) -> str:
     job_id = uuid.uuid4().hex[:16]
     job = {"id": job_id, "session_id": session_id, "status": "running",
@@ -2538,10 +2554,16 @@ def start_chat_job(session_id: str, text: str, images: list[dict[str, Any]]) -> 
 
     def run():
         try:
-            result = chat_turn(session_id, text, images, progress=progress)
+            result = chat_turn(session_id, text, images, progress=progress, job=job)
             with _JOBS_LOCK:
                 job["result"] = result
                 job["status"] = "done"
+        except ChatCancelled as exc:
+            with _JOBS_LOCK:
+                job["status"] = "cancelled"
+                job["error"] = str(exc)
+                job["events"].append({"type": "stage", "text": "Прервано пользователем",
+                                      "seq": len(job["events"]) + 1})
         except Exception as exc:
             with _JOBS_LOCK:
                 job["error"] = str(exc)
@@ -2549,6 +2571,18 @@ def start_chat_job(session_id: str, text: str, images: list[dict[str, Any]]) -> 
 
     threading.Thread(target=run, daemon=True, name="chat-job").start()
     return job_id
+
+
+def stop_chat_job(job_id: str) -> dict[str, Any] | None:
+    with _JOBS_LOCK:
+        job = _JOBS.get(job_id)
+        if not job:
+            return None
+        if job["status"] == "running":
+            job["cancel"] = True
+            job["events"].append({"type": "stage", "text": "Прерываю...",
+                                  "seq": len(job["events"]) + 1})
+        return {"id": job["id"], "status": job["status"], "cancel": bool(job.get("cancel"))}
 
 
 def get_chat_job(job_id: str) -> dict[str, Any] | None:

@@ -214,6 +214,18 @@
     box.appendChild(wrap); box.scrollTop = box.scrollHeight;
     return wrap;
   }
+  var activeChatJob = null;
+  function setChatRunning(on) {
+    $("chat-send").disabled = on;
+    $("chat-send").textContent = on ? "Думаю..." : "Отправить";
+    $("chat-stop").classList.toggle("hidden", !on);
+  }
+  async function stopChatJob() {
+    if (!activeChatJob) return;
+    var th = $("thinking-text"); if (th) th.textContent = "Прерываю...";
+    try { await api("/api/chat/jobs/" + encodeURIComponent(activeChatJob) + "/stop", { method: "POST" }); }
+    catch (e) { toast("Стоп: " + e.message, true); }
+  }
   async function pollChatJob(jobId) {
     var seen = 0;
     for (;;) {
@@ -235,10 +247,13 @@
         var box = $("chat-messages"); if (box) box.scrollTop = box.scrollHeight;
       });
       if (d.status === "done") break;
+      if (d.status === "cancelled") { toast("Прервано"); break; }
       if (d.status === "error") { toast("Ошибка чата: " + (d.error || ""), true); break; }
       await new Promise(function (r) { setTimeout(r, 800); });
     }
+    activeChatJob = null;
     var th = $("chat-thinking"); if (th) th.remove();
+    setChatRunning(false);
     await loadChatSessions(chatSession);
     await loadChat();
   }
@@ -250,18 +265,23 @@
     chatAttachments = []; renderChatChips(); $("chat-input").value = "";
     appendUserBubble(text, images);
     appendThinkingBubble();
-    $("chat-send").disabled = true; $("chat-send").textContent = "Думаю...";
+    setChatRunning(true);
     try {
       var d = await api("/api/chat/send", { method: "POST", body: JSON.stringify(payload) });
+      activeChatJob = d.job_id;
       await pollChatJob(d.job_id);
     } catch (e) {
       var th = $("chat-thinking"); if (th) th.remove();
       toast("Чат: " + e.message, true);
       await loadChat();
-    } finally {
-      $("chat-send").disabled = false; $("chat-send").textContent = "Отправить";
+      setChatRunning(false);
+      activeChatJob = null;
     }
   }
+  $("chat-stop").addEventListener("click", stopChatJob);
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && activeChatJob) { e.preventDefault(); stopChatJob(); }
+  });
   $("chat-send").addEventListener("click", sendChat);
   $("chat-input").addEventListener("keydown", function (e) {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
