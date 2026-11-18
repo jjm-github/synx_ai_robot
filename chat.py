@@ -20,6 +20,7 @@ import doc_flow
 import fs_tools
 import mcp_manager
 import mcp_runtime
+import passport_batch
 import pdf_cache
 import publish_flow
 import synx_tools
@@ -160,7 +161,11 @@ PDF на стандартных страницах, проверит его и �
   версии/задачи), затем вызывай `synx_delete_entity`. Непустые сущности
   (с версиями/задачами) удаляй только с `force=true` после явного подтверждения.
 - «Просчитай все локации/шоты через конвейер» = создай по задаче на каждую
-  сущность и запусти конвейер, не спрашивая подтверждения. Назначение ботов на
+  сущность и запусти конвейер, не спрашивая подтверждения.
+- «По 9 видов + 1 превью на локацию» / «паспорт 10 страниц» = запусти
+  `start_passport_batch` (project, locations=all, views=9). Он в фоне генерирует
+  9 ракурсов, собирает контактный лист первой страницей и публикует 10-страничный
+  PDF новой версией. Не делай это вручную по одному кадру и не спрашивай. Назначение ботов на
   существующие задачи — `synx_assign_task` (не пересоздавай задачу).
 - Версия для АССЕТА (локация/объект/персонаж) публикуется через
   `publish_pdf_as_version` (любой PDF, растровый или текстовый). Не ищи шот и
@@ -903,6 +908,19 @@ TEXT_DOC_TOOLS = [
             "page_size": {"type": "string", "enum": ["A4", "A3", "LETTER"], "default": "A4"},
             "font_size": {"type": "number", "default": 10.5},
         }, "required": ["text"]},
+    }},
+    {"type": "function", "function": {
+        "name": "start_passport_batch",
+        "description": ("Start a background batch of location passports: 9 views + 1 preview "
+                        "page = 10-page A3 PDF per location, published as a new version. "
+                        "Use for «по 9 видов + превью для всех локаций» — no extra questions."),
+        "parameters": {"type": "object", "properties": {
+            "project": {"type": "string"},
+            "locations": {"type": "array", "items": {"type": "string"},
+                          "description": "Location names or [\"all\"]"},
+            "views": {"type": "integer", "default": 9},
+            "bot": {"type": "string", "default": "a.smirnov"},
+        }, "required": ["project"]},
     }},
     {"type": "function", "function": {
         "name": "publish_pdf_as_version",
@@ -2363,6 +2381,13 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
                 page_size=args.get("page_size") or "A4",
                 font_size=float(args.get("font_size") or 10.5))
             return info, [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
+    if name == "start_passport_batch":
+        try:
+            return passport_batch.start(
+                args.get("project") or "", list(args.get("locations") or ["all"]),
+                int(args.get("views") or 9), args.get("bot") or "a.smirnov"), [], None
         except Exception as exc:
             return {"error": str(exc)}, [], None
     if name == "publish_pdf_as_version":
