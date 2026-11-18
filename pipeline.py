@@ -113,7 +113,10 @@ class ComfyRunner:
             raise PipelineError("ComfyUI finished without output files (check comfy.output_dir)")
         work_dir.mkdir(parents=True, exist_ok=True)
         dst = work_dir / files[0].name
-        shutil.copy2(files[0], dst)
+        # The /view fallback already writes into work_dir, so copying onto the
+        # same path raises SameFileError (broke a whole batch of tasks).
+        if files[0].resolve() != dst.resolve():
+            shutil.copy2(files[0], dst)
         return dst
 
     def stage_image(self, task: dict[str, Any], work_dir: Path) -> str | None:

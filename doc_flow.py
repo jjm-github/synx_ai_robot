@@ -85,12 +85,21 @@ def publish_pdf_as_version(project: str, entity: str, pdf_path: str | Path, *,
     sequence = str(ent.get("sequence_name") or "")
 
     name = task_name or "location_develop"
-    types = client.task_types(proj["id"])
-    requested_type = task_type or "Concept"
-    if types and requested_type not in types and requested_type != "Script":
-        requested_type = "Art" if "Art" in types else (types[0] if types else "Art")
     tasks = client.tasks(ent["id"])
-    task = next((t for t in tasks if t.get("task_name") == name), None)
+    same = [t for t in tasks if t.get("task_name") == name]
+    types = client.task_types(proj["id"])
+    # A type that already exists on the entity (Concept, Script, ...) is valid
+    # even when the project's advertised task-type list does not include it.
+    allowed = set(types) | {str(t.get("task_type")) for t in tasks}
+    requested_type = task_type or "Concept"
+    if requested_type not in allowed and requested_type != "Script":
+        requested_type = "Script" if "Script" in types else (types[0] if types else "Art")
+    # Prefer the task with the requested type and a live status: the same name
+    # may exist for several types (e.g. Art omit + Concept todo).
+    task = next((t for t in same if requested_type and t.get("task_type") == requested_type
+                 and t.get("status") != "omit"), None)
+    task = task or next((t for t in same if t.get("status") != "omit"), None) \
+        or (same[0] if same else None)
     if task and task.get("task_type"):
         requested_type = str(task["task_type"])
     if not task:
@@ -191,16 +200,20 @@ def publish_text_document(project: str, entity: str, *,
     entity_kind = str(ent.get("entity_kind") or "asset")
     sequence = str(ent.get("sequence_name") or "")
 
-    types = client.task_types(proj["id"])
-    requested_type = task_type or ("Script" if "Script" in types else "Art")
-    # Asset scripts use the Script task type even when the project's task-type
-    # list does not advertise it (existing write_script tasks prove it works).
-    if types and requested_type not in types and requested_type != "Script":
-        requested_type = "Script" if "Script" in types else (types[0] if types else "Art")
     name = task_name or _safe(title or Path(str(pdf_path or entity_name)).stem, "text_document")
-
     tasks = client.tasks(ent["id"])
-    task = next((t for t in tasks if t.get("task_name") == name), None)
+    same = [t for t in tasks if t.get("task_name") == name]
+    types = client.task_types(proj["id"])
+    allowed = set(types) | {str(t.get("task_type")) for t in tasks}
+    requested_type = task_type or ("Script" if "Script" in types else "Art")
+    if requested_type not in allowed and requested_type != "Script":
+        requested_type = "Script" if "Script" in types else (types[0] if types else "Art")
+    # Prefer the task with the requested type and a live status: the same name
+    # may exist for several types (e.g. Art omit + Concept todo).
+    task = next((t for t in same if requested_type and t.get("task_type") == requested_type
+                 and t.get("status") != "omit"), None)
+    task = task or next((t for t in same if t.get("status") != "omit"), None) \
+        or (same[0] if same else None)
     if task and task.get("task_type"):
         requested_type = str(task["task_type"])
     if not task:
