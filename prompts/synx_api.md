@@ -48,6 +48,25 @@
 `@p.robot` в локальную таблицу. Для вопросов «что нового» используй таблицу,
 а не повторный полный обход API.
 
+## Создание сущностей и задач
+
+- `GET /api/projects/{project_id}/asset_types` — допустимые типы ассетов
+  (`code` + `label`; например `script` = «Script»).
+- `POST /api/projects/{project_id}/entities` JSON `EntityCreate`:
+  `entity_kind` (`asset`/`shot`), `name`, `display_name`, `info`,
+  `cut_in`, `cut_out`, `asset_type` (code, не label), `linked_asset_ids`,
+  `skill_codes`, `task_types`.
+  Пример ассета: `{"entity_kind":"asset","name":"main_script",
+  "asset_type":"script","info":"разработка главного сценария фильма"}`.
+- `PATCH /api/entities/{entity_id}` — изменить сущность.
+- `PATCH /api/entities/{entity_id}/status` — статус сущности.
+- `PATCH /api/entities/{entity_id}/length` — длина.
+- `PATCH /api/projects/{project_id}/entities/asset-type` — массовая смена типа.
+- `POST /api/entities/{entity_id}/tasks` — создать задачу
+  (`task_name`, `task_type`, `bid`, `status`, `comment`).
+- `POST /api/tasks/{task_id}/assignments` — назначить исполнителей.
+- `PATCH /api/tasks/{task_id}/priority` — приоритет; `/budget` — бюджет.
+
 ## Запись
 
 - `POST /api/entities/{entity_id}/tasks` JSON:

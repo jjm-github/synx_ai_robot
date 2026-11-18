@@ -262,6 +262,19 @@
       <div class="viewer-stage" id="viewer-stage"><img id="viewer-img" alt=""></div>
       <div class="viewer-hint">Колесо — зум · средняя кнопка + движение — панорама · средний клик — сброс · ПКМ — действия</div>
     </div>
+    <div id="pdf-viewer" class="pdf-viewer hidden">
+      <div class="pdf-viewer-top">
+        <span id="pdf-viewer-title">PDF</span>
+        <span class="muted" id="pdf-viewer-progress"></span>
+        <div class="pdf-viewer-nav">
+          <button class="btn" id="pdf-viewer-prev">‹</button>
+          <span id="pdf-viewer-page">0 / 0</span>
+          <button class="btn" id="pdf-viewer-next">›</button>
+          <button class="btn ghost" id="pdf-viewer-close">×</button>
+        </div>
+      </div>
+      <div class="pdf-viewer-stage" id="pdf-viewer-stage"><img id="pdf-viewer-img" alt=""></div>
+    </div>
     <div id="image-ctx" class="ctx-menu">
       <div class="ctx-item" id="img-save">Сохранить как...</div>
       <div class="ctx-item" id="img-copy">Копировать изображение</div>

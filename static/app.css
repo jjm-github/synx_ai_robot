@@ -496,3 +496,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .mcp-search { display: flex; gap: 8px; margin-bottom: 8px; }
 
 .local-file-link { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+
+/* PDF viewer with parallel cached page renders */
+.pdf-viewer { position: fixed; inset: 0; z-index: 2100; background: var(--bg); display: flex; flex-direction: column; }
+.pdf-viewer.hidden { display: none; }
+.pdf-viewer-top { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.pdf-viewer-top b, #pdf-viewer-title { color: var(--ink); font-weight: 650; }
+.pdf-viewer-nav { display: flex; gap: 8px; align-items: center; }
+.pdf-viewer-stage { flex: 1 1 auto; min-height: 0; overflow: hidden; display: grid; place-items: center; cursor: grab; background: var(--bg); }
+.pdf-viewer-stage.dragging { cursor: grabbing; }
+.pdf-viewer-stage img { max-width: 100%; max-height: 100%; transform-origin: center center; user-select: none; -webkit-user-drag: none; }

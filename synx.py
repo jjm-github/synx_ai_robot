@@ -104,6 +104,25 @@ class SynxClient:
     def version_comments(self, version_id: str) -> list[dict[str, Any]]:
         return self._get(f"/api/versions/{version_id}/comments")["comments"]
 
+    def asset_types(self, project_id: str) -> list[dict[str, Any]]:
+        try:
+            return self._get(f"/api/projects/{project_id}/asset_types").get("asset_types", [])
+        except Exception:
+            return []
+
+    def create_entity(self, project_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        r = self.s.post(f"{self.base}/api/projects/{project_id}/entities",
+                        json=payload, timeout=60)
+        if r.status_code >= 400:
+            raise SynxError(f"create entity: {r.status_code} {r.text[:500]}")
+        return r.json()
+
+    def update_entity(self, entity_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        r = self.s.patch(f"{self.base}/api/entities/{entity_id}", json=payload, timeout=60)
+        if r.status_code >= 400:
+            raise SynxError(f"update entity: {r.status_code} {r.text[:500]}")
+        return r.json()
+
     def task_types(self, project_id: str) -> list[str]:
         try:
             raw = self._get(f"/api/projects/{project_id}/task_types")["task_types"]

@@ -358,6 +358,15 @@
       items.push({label: "Открыть ссылку", fn: function () { openHref(href); }});
       items.push({sep: true});
     }
+    var codeEl = e.target.closest("code, .mono");
+    if (codeEl) {
+      var codeText = (codeEl.textContent || "").trim();
+      if (/^(\/|~\/).+\.pdf$/i.test(codeText)) {
+        items.push({label: "Открыть PDF в роботе", fn: function () { openPdfViewer(codeText, "PDF"); }});
+        items.push({label: "Открыть во внешнем просмотрщике", fn: function () { openPath(codeText); }});
+        items.push({sep: true});
+      }
+    }
     items.push({label: "Копировать сообщение (.md)", fn: function () { copyText(messageMarkdown(msg.__msg || {})); }});
     if (text) {
       items.push({label: isUser ? "Копировать запрос" : "Копировать ответ", fn: function () { copyText(text); }});
@@ -562,6 +571,124 @@
   }
   $("img-save").addEventListener("click", function () { $("image-ctx").classList.remove("open"); saveImageAs(); });
   $("img-copy").addEventListener("click", function () { $("image-ctx").classList.remove("open"); copyImage(); });
+
+  // ---------- PDF viewer (parallel page render cache) ----------
+  var pdfView = {jobId: null, total: 0, current: 1, pages: [], status: "",
+                 poll: null, scale: 1, x: 0, y: 0, down: false, sx: 0, sy: 0, px: 0, py: 0, moved: false};
+  function pdfApply() {
+    var im = $("pdf-viewer-img");
+    im.style.transform = "translate(" + pdfView.x + "px," + pdfView.y + "px) scale(" + pdfView.scale + ")";
+  }
+  function pdfReset() {
+    pdfView.scale = 1; pdfView.x = 0; pdfView.y = 0; pdfApply();
+  }
+  function pdfUpdate() {
+    $("pdf-viewer-page").textContent = pdfView.current + " / " + (pdfView.total || 0);
+    var p = $("pdf-viewer-progress");
+    if (pdfView.status === "ready") p.textContent = "готово: " + pdfView.total + " страниц";
+    else if (pdfView.status === "error") p.textContent = "ошибка рендера";
+    else p.textContent = "рендер страниц: " + pdfView.pages.length + " / " + pdfView.total;
+  }
+  function pdfLoadCurrent() {
+    var im = $("pdf-viewer-img");
+    if (!pdfView.jobId) return;
+    if (pdfView.status !== "ready" && pdfView.pages.indexOf(pdfView.current) === -1) {
+      pdfUpdate(); return;
+    }
+    if (im.dataset.page === String(pdfView.current)) return;
+    im.dataset.page = String(pdfView.current);
+    im.src = "/api/pdf/page/" + encodeURIComponent(pdfView.jobId) + "/" + pdfView.current;
+    pdfReset();
+  }
+  function pdfSetPage(n) {
+    n = Math.max(1, Math.min(pdfView.total || 1, n));
+    pdfView.current = n;
+    var im = $("pdf-viewer-img");
+    if (pdfView.status === "ready" || pdfView.pages.indexOf(n) !== -1) {
+      im.dataset.page = "";
+      pdfLoadCurrent();
+    } else {
+      im.removeAttribute("src"); im.dataset.page = "";
+    }
+    pdfUpdate();
+  }
+  function pdfStopPoll() {
+    if (pdfView.poll) { clearInterval(pdfView.poll); pdfView.poll = null; }
+  }
+  function pdfStartPoll() {
+    pdfStopPoll();
+    pdfView.poll = setInterval(async function () {
+      if (!pdfView.jobId) return;
+      try {
+        var d = await api("/api/pdf/render/" + encodeURIComponent(pdfView.jobId));
+        pdfView.status = d.status; pdfView.total = d.total; pdfView.pages = d.pages || [];
+        pdfUpdate(); pdfLoadCurrent();
+        if (d.status === "ready" || d.status === "error") pdfStopPoll();
+      } catch (e) { /* retry */ }
+    }, 800);
+  }
+  async function openPdfViewer(path, title) {
+    if (!path) return;
+    pdfStopPoll();
+    pdfView = {jobId: null, total: 0, current: 1, pages: [], status: "running",
+               poll: null, scale: 1, x: 0, y: 0, down: false, sx: 0, sy: 0, px: 0, py: 0, moved: false};
+    $("pdf-viewer-title").textContent = title || "PDF";
+    $("pdf-viewer-img").removeAttribute("src");
+    $("pdf-viewer-img").dataset.page = "";
+    $("pdf-viewer-progress").textContent = "запускаю рендер...";
+    $("pdf-viewer").classList.remove("hidden");
+    pdfUpdate();
+    try {
+      var d = await api("/api/pdf/render", {method: "POST",
+        body: JSON.stringify({path: path, dpi: 200, workers: 4})});
+      pdfView.jobId = d.id; pdfView.total = d.total; pdfView.pages = d.pages || [];
+      pdfView.status = d.status || "running";
+      pdfSetPage(1); pdfUpdate(); pdfStartPoll();
+    } catch (e) {
+      $("pdf-viewer-progress").textContent = "ошибка: " + e.message;
+    }
+  }
+  function closePdfViewer() {
+    pdfStopPoll();
+    $("pdf-viewer").classList.add("hidden");
+    $("pdf-viewer-img").removeAttribute("src");
+    pdfView.jobId = null;
+  }
+  $("pdf-viewer-close").addEventListener("click", closePdfViewer);
+  $("pdf-viewer-prev").addEventListener("click", function () { pdfSetPage(pdfView.current - 1); });
+  $("pdf-viewer-next").addEventListener("click", function () { pdfSetPage(pdfView.current + 1); });
+  $("pdf-viewer-img").addEventListener("error", function () {
+    if (pdfView.status !== "ready") $("pdf-viewer-progress").textContent = "страница рендерится...";
+  });
+  $("pdf-viewer-stage").addEventListener("wheel", function (e) {
+    e.preventDefault();
+    var factor = e.deltaY < 0 ? 1.14 : 1 / 1.14;
+    pdfView.scale = Math.max(0.4, Math.min(8, pdfView.scale * factor));
+    pdfApply();
+  }, {passive: false});
+  $("pdf-viewer-stage").addEventListener("mousedown", function (e) {
+    if (e.button !== 1) return;
+    e.preventDefault(); pdfView.down = true; pdfView.moved = false;
+    pdfView.sx = e.clientX; pdfView.sy = e.clientY; pdfView.px = pdfView.x; pdfView.py = pdfView.y;
+    $("pdf-viewer-stage").classList.add("dragging");
+  });
+  window.addEventListener("mousemove", function (e) {
+    if (!pdfView.down) return;
+    var dx = e.clientX - pdfView.sx, dy = e.clientY - pdfView.sy;
+    if (Math.abs(dx) + Math.abs(dy) > 4) pdfView.moved = true;
+    pdfView.x = pdfView.px + dx; pdfView.y = pdfView.py + dy; pdfApply();
+  });
+  window.addEventListener("mouseup", function (e) {
+    if (e.button !== 1 || !pdfView.down) return;
+    pdfView.down = false; $("pdf-viewer-stage").classList.remove("dragging");
+    if (!pdfView.moved) pdfReset();
+  });
+  document.addEventListener("keydown", function (e) {
+    if ($("pdf-viewer").classList.contains("hidden")) return;
+    if (e.key === "Escape") closePdfViewer();
+    else if (e.key === "ArrowLeft") pdfSetPage(pdfView.current - 1);
+    else if (e.key === "ArrowRight") pdfSetPage(pdfView.current + 1);
+  });
 
   // ---------- config/settings ----------
   async function loadSettings() {
@@ -1045,7 +1172,10 @@
     var code = e.target.closest("code, .mono");
     if (code) {
       var text = (code.textContent || "").trim();
-      if (/^(\/|~\/).+\.(pdf|png|jpe?g|webp|gif|mp4|mov|webm|mkv|json|md|txt)$/i.test(text)) {
+      if (/^(\/|~\/).+\.pdf$/i.test(text)) {
+        e.preventDefault(); openPdfViewer(text, "PDF"); return;
+      }
+      if (/^(\/|~\/).+\.(png|jpe?g|webp|gif|mp4|mov|webm|mkv|json|md|txt)$/i.test(text)) {
         e.preventDefault(); openPath(text);
       }
     }

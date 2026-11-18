@@ -366,6 +366,104 @@ def project_news(project: str, date_from: str | None = None, date_to: str | None
     }
 
 
+def find_entity(project: str, name: str, entity_kind: str | None = None) -> dict[str, Any]:
+    c = client()
+    p = _project(c, project)
+    norm = re.sub(r"[-\s]+", "_", str(name or "").strip().lower())
+    rows = c.entities(p["id"])
+    for e in rows:
+        ename = re.sub(r"[-\s]+", "_", str(e.get("name") or "").strip().lower())
+        if ename == norm and (not entity_kind or e.get("entity_kind") == entity_kind):
+            return e
+    raise ValueError(f"entity not found: {name}")
+
+
+def _entity_url(base: str, project_alias: str, entity: dict[str, Any]) -> str:
+    from urllib.parse import quote
+    kind = entity.get("entity_kind") or "asset"
+    name = entity.get("name") or ""
+    return f"{base.rstrip('/')}/p/{quote(str(project_alias or ''))}?tab=tasks&t={quote(kind + '-' + str(name))}"
+
+
+def asset_types(project: str) -> dict[str, Any]:
+    c = client()
+    p = _project(c, project)
+    return {"project": p.get("alias"), "asset_types": c.asset_types(p["id"])}
+
+
+def task_types(project: str) -> dict[str, Any]:
+    c = client()
+    p = _project(c, project)
+    return {"project": p.get("alias"), "task_types": c.task_types(p["id"])}
+
+
+def create_entity(project: str, name: str, entity_kind: str = "asset",
+                  asset_type: str | None = None, info: str | None = None,
+                  display_name: str | None = None, cut_in: int | None = None,
+                  cut_out: int | None = None, task_types: list[str] | None = None,
+                  skill_codes: list[str] | None = None) -> dict[str, Any]:
+    c = client()
+    p = _project(c, project)
+    entity_kind = "shot" if str(entity_kind).lower() == "shot" else "asset"
+    existing = None
+    for e in c.entities(p["id"]):
+        if str(e.get("name") or "").lower() == str(name).lower() and e.get("entity_kind") == entity_kind:
+            existing = e
+            break
+    if existing:
+        return {"ok": True, "exists": True, "entity": existing,
+                "url": _entity_url(c.base, p.get("alias"), existing)}
+    resolved_type = None
+    available = []
+    if entity_kind == "asset" and asset_type:
+        for t in c.asset_types(p["id"]):
+            code = str(t.get("code") or "")
+            label = str(t.get("label") or "")
+            available.append(f"{code} ({label})")
+            if str(asset_type).lower() in (code.lower(), label.lower()):
+                resolved_type = code
+                break
+        if not resolved_type:
+            raise ValueError(f"unknown asset_type: {asset_type}. Available: {', '.join(available)}")
+    payload = {
+        "entity_kind": entity_kind, "name": name,
+        "display_name": display_name or name, "info": info or "",
+        "asset_type": resolved_type, "task_types": task_types or [],
+        "skill_codes": skill_codes or [],
+    }
+    if cut_in is not None:
+        payload["cut_in"] = int(cut_in)
+    if cut_out is not None:
+        payload["cut_out"] = int(cut_out)
+    e = c.create_entity(p["id"], payload)
+    return {"ok": True, "exists": False, "entity": e,
+            "url": _entity_url(c.base, p.get("alias"), e)}
+
+
+def create_task(project: str, shot: str, task_name: str, task_type: str,
+                assignee: str | None = None, comment: str = "",
+                status: str = "wip", bid: float = 3.0) -> dict[str, Any]:
+    c = client()
+    p = _project(c, project)
+    e = find_entity(project, shot)
+    types = c.task_types(p["id"])
+    if types and task_type not in types:
+        raise ValueError(f"invalid task_type for {e.get('entity_kind')}: {task_type}. Available: {', '.join(types)}")
+    task = c.create_task(e["id"], task_name, task_type, comment=comment,
+                         bid=float(bid), status=status)
+    assigned = None
+    if assignee:
+        try:
+            users = {u.get("short_name"): u for u in c.assignment_users(task["id"])}
+            if assignee in users:
+                c.assign(task["id"], [users[assignee]["id"]])
+                assigned = assignee
+        except Exception:
+            pass
+    return {"ok": True, "task": task, "entity": e, "assigned": assigned,
+            "url": _entity_url(c.base, p.get("alias"), e)}
+
+
 def tasks(project: str, status: str | None = None, limit: int = 300) -> dict[str, Any]:
     c = client()
     p = _project(c, project)

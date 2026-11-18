@@ -17,6 +17,7 @@ import db
 import fs_tools
 import mcp_manager
 import mcp_runtime
+import pdf_cache
 import publish_flow
 import synx_tools
 import system_info
@@ -93,7 +94,9 @@ README — должны лежать под задачей, в папке бот
 Не отвечай, что у тебя нет инструментов создания задачи/назначения/публикации —
 они есть. Если нужен список ботов и их скилов, вызови synx_bots.
 
-Для отдельной склейки картинок в PDF используй make_pdf_from_images (одна
+Для просмотра/проверки PDF используй pdf_render_pages: он параллельно рендерит
+все страницы в кэш PNG, а UI показывает уже готовые страницы. Для отдельной
+склейки картинок в PDF используй make_pdf_from_images (одна
 картинка на страницу, стандартная страница A3, поля и проверка). Для создания
 задачи, раскладки файлов и публикации PDF версией используй
 publish_images_as_version. Перед публикацией PDF всегда проверяй
@@ -126,6 +129,15 @@ PDF на стандартных страницах, проверит его и �
 Перед первым вызовом незнакомого инструмента запроси схему через
 `mcp_call` tool=describe_tool. Для видео также доступен `ffmpeg-skill`
 (`mcp_call` tool=probe/cut/fit/...). Для PDF проще прямой PIL-пайплайн.
+
+## Создание ассетов, шотов и задач
+
+Для «создай ассет/шот в проекте X» используй `synx_create_entity` ОДИН раз:
+project, name, entity_kind (`asset`/`shot`), `asset_type` (можно label, инструмент
+сам сопоставит с кодом; список — `synx_asset_types`), `info` — описание.
+Для «создай задачу» — `synx_create_task` с project, shot/entity, task_name,
+task_type (список — `synx_task_types`), assignee и comment. Не ходи по кругу
+через fs_list/synx_versions/verify_pdf: это операции записи, а не поиска.
 
 ## Daily PDF
 
@@ -297,6 +309,21 @@ PDF_TOOL = {
     },
 }
 
+PDF_RENDER_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "pdf_render_pages",
+        "description": ("Render every page of a local PDF in parallel to cached PNGs. Returns a job id, "
+                        "page count and status; page images are served by /api/pdf/page/{job_id}/{n}. "
+                        "Use this to verify a PDF visually or to show cached high-resolution pages."),
+        "parameters": {"type": "object", "properties": {
+            "path": {"type": "string"},
+            "dpi": {"type": "integer", "default": 200},
+            "workers": {"type": "integer", "default": 4},
+        }, "required": ["path"]},
+    },
+}
+
 VERIFY_PDF_TOOL = {
     "type": "function",
     "function": {
@@ -422,6 +449,62 @@ SYNX_TOOLS = [
                 },
                 "required": ["project"],
             },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "synx_asset_types",
+            "description": "List valid asset types (code and label) for a synx project.",
+            "parameters": {"type": "object", "properties": {"project": {"type": "string"}},
+                           "required": ["project"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "synx_task_types",
+            "description": "List valid task types for a synx project.",
+            "parameters": {"type": "object", "properties": {"project": {"type": "string"}},
+                           "required": ["project"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "synx_create_entity",
+            "description": ("Create an asset or shot in a synx project. asset_type can be a code or label "
+                            "(e.g. Script -> script). Use synx_asset_types to discover valid types."),
+            "parameters": {"type": "object", "properties": {
+                "project": {"type": "string"},
+                "name": {"type": "string"},
+                "entity_kind": {"type": "string", "enum": ["asset", "shot"], "default": "asset"},
+                "asset_type": {"type": "string"},
+                "info": {"type": "string"},
+                "display_name": {"type": "string"},
+                "cut_in": {"type": "integer"},
+                "cut_out": {"type": "integer"},
+                "task_types": {"type": "array", "items": {"type": "string"}},
+                "skill_codes": {"type": "array", "items": {"type": "string"}},
+            }, "required": ["project", "name"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "synx_create_task",
+            "description": ("Create a task in synx for an existing shot/asset, optionally assign a bot/user. "
+                            "task_type must be valid for the project."),
+            "parameters": {"type": "object", "properties": {
+                "project": {"type": "string"},
+                "shot": {"type": "string", "description": "Entity name, e.g. main_script or p002_0130"},
+                "task_name": {"type": "string"},
+                "task_type": {"type": "string"},
+                "assignee": {"type": "string", "description": "Bot/user short_name"},
+                "comment": {"type": "string"},
+                "status": {"type": "string", "default": "wip"},
+                "bid": {"type": "number", "default": 3.0},
+            }, "required": ["project", "shot", "task_name", "task_type"]},
         },
     },
     {
@@ -572,7 +655,7 @@ MCP_TOOLS = [
     }},
 ]
 
-TOOLS = [IMAGE_TOOL, VERSION_GEN_TOOL, PDF_TOOL, VERIFY_PDF_TOOL, REPAIR_PDF_TOOL, DAILY_PDF_TOOL, PUBLISH_TOOL, FFMPEG_TOOL] + MCP_TOOLS + SYNX_TOOLS + FS_TOOLS
+TOOLS = [IMAGE_TOOL, VERSION_GEN_TOOL, PDF_TOOL, PDF_RENDER_TOOL, VERIFY_PDF_TOOL, REPAIR_PDF_TOOL, DAILY_PDF_TOOL, PUBLISH_TOOL, FFMPEG_TOOL] + MCP_TOOLS + SYNX_TOOLS + FS_TOOLS
 GEN_RE = re.compile(
     r"(нарисуй|сгенер|сгенерируй|сделай\s+(картин|изображ|кадр|арт)|"
     r"draw|generate\s+(an?\s+)?image|make\s+(an?\s+)?image|create\s+(an?\s+)?image)",
@@ -893,6 +976,29 @@ def _news_request(text: str) -> dict[str, Any] | None:
     d0, d1, label = _period_from_text(text or "")
     return {"project": project, "date_from": d0.isoformat(),
             "date_to": d1.isoformat(), "label": label}
+
+
+def _entity_create_request(text: str) -> dict[str, Any] | None:
+    low = (text or "").lower()
+    if "созда" not in low or not ("ассет" in low or "шот" in low or "shot" in low):
+        return None
+    m_project = re.search(r"в\s+проект[еа]?\s+([A-Za-z0-9_.-]+)", text or "", re.I)
+    if not m_project:
+        return None
+    m_name = re.search(r"называться\s+[«\"']?([A-Za-z0-9_.-]+)", text or "", re.I)
+    if not m_name:
+        m_name = re.search(r"название\s*[:—-]\s*[«\"']?([A-Za-z0-9_.-]+)", text or "", re.I)
+    if not m_name:
+        return None
+    kind = "shot" if ("шот" in low or "shot" in low) else "asset"
+    m_type = re.search(r"тип[а]?\s+[«\"']?([A-Za-z0-9_.-]+)", text or "", re.I)
+    m_desc = re.search(r"в\s+описании\s+(?:напиши\s+)?[«\"']?(.+?)[»\"']?(?:\.|$)",
+                       text or "", re.I | re.S)
+    return {"project": m_project.group(1).rstrip(".,;"),
+            "name": m_name.group(1).rstrip(".,;"),
+            "entity_kind": kind,
+            "asset_type": m_type.group(1).rstrip(".,;") if m_type else None,
+            "info": m_desc.group(1).strip() if m_desc else ""}
 
 
 def _pdf_remix_request(text: str) -> dict[str, Any] | None:
@@ -1226,6 +1332,28 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
         return synx_tools.projects(), [], None
     if name == "synx_bots":
         return publish_flow.list_bots(args.get("project"), args.get("task_id")), [], None
+    if name == "synx_asset_types":
+        return synx_tools.asset_types(args.get("project") or ""), [], None
+    if name == "synx_task_types":
+        return synx_tools.task_types(args.get("project") or ""), [], None
+    if name == "synx_create_entity":
+        try:
+            return synx_tools.create_entity(
+                args.get("project") or "", args.get("name") or "",
+                args.get("entity_kind") or "asset", args.get("asset_type"),
+                args.get("info"), args.get("display_name"), args.get("cut_in"),
+                args.get("cut_out"), args.get("task_types"), args.get("skill_codes")), [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
+    if name == "synx_create_task":
+        try:
+            return synx_tools.create_task(
+                args.get("project") or "", args.get("shot") or "",
+                args.get("task_name") or "", args.get("task_type") or "",
+                args.get("assignee"), args.get("comment") or "",
+                args.get("status") or "wip", float(args.get("bid") or 3.0)), [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
     if name == "synx_project_news":
         return synx_tools.project_news(
             args.get("project") or "", args.get("date_from"), args.get("date_to"),
@@ -1249,6 +1377,12 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
         info = publish_flow.verify_pdf(pdf, expected_pages=len(imgs))
         return {"ok": bool(info.get("ok")), "pdf": str(pdf), "pages": len(imgs),
                 "pdf_info": info, "images": [i["path"] for i in imgs]}, [], None
+    if name == "pdf_render_pages":
+        try:
+            return pdf_cache.start(args.get("path") or "", dpi=int(args.get("dpi") or 200),
+                                   workers=int(args.get("workers") or 4)), [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
     if name == "verify_pdf":
         pdf_path = args.get("pdf_path")
         if not pdf_path and args.get("task_id") is not None:
@@ -1479,6 +1613,35 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
     content = ""
     tool_used = False
     ai_error = False
+
+    # Create asset/shot requests ("создай ассет main_script типа Script...").
+    ent = _entity_create_request(text or "")
+    if ent:
+        try:
+            emit({"type": "stage", "text": "Создаю сущность в synx..."})
+            result = synx_tools.create_entity(
+                ent["project"], ent["name"], ent["entity_kind"],
+                asset_type=ent.get("asset_type"), info=ent.get("info"))
+            entity = result.get("entity") or {}
+            kind_label = "Ассет" if entity.get("entity_kind") == "asset" else "Шот"
+            if result.get("exists"):
+                content = (f"{kind_label} **{entity.get('name')}** уже существует в проекте "
+                           f"**{ent['project']}**.\n\n- Тип: `{entity.get('asset_type') or ent.get('asset_type') or '—'}`\n"
+                           f"- Описание: {entity.get('info') or ent.get('info') or '—'}\n"
+                           f"- Ссылка: {result.get('url')}")
+            else:
+                content = (f"Готово. {kind_label} **{entity.get('name')}** создан в проекте "
+                           f"**{ent['project']}**.\n\n- Тип: `{entity.get('asset_type') or ent.get('asset_type') or '—'}`\n"
+                           f"- Описание: {entity.get('info') or ent.get('info') or '—'}\n"
+                           f"- ID: `{entity.get('id')}`\n"
+                           f"- Ссылка: {result.get('url')}")
+        except Exception as exc:
+            content = f"Не удалось создать сущность: {exc}"
+        emit({"type": "stage", "text": "Готово"})
+        db.add_chat_message(session_id, "assistant", content, generated=[],
+                            usage=usage, playlist_text=None, progress=stages)
+        return {"messages": db.list_chat_messages(session_id), "usage": usage,
+                "generated": [], "playlist_text": None, "stages": stages}
 
     # PDF layout remix: "based on v013, make vN with black pages, 300 dpi,
     # 20% smaller text, image centered". This must run before the generic

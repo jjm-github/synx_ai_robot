@@ -23,6 +23,7 @@ from paths import render_dir, task_work_dir
 from classify import classify_publication
 import fs_tools
 import mcp_manager
+import pdf_cache
 from links import task_version_url
 from plan_md import save_plan_markdown
 from chat import (IMAGES as CHAT_IMAGES, UPLOADS as CHAT_UPLOADS,
@@ -58,6 +59,12 @@ class AnalyzeBody(BaseModel):
 
 class CreateTaskBody(BaseModel):
     plan: dict[str, Any] | None = None
+
+
+class PdfRenderBody(BaseModel):
+    path: str
+    dpi: int = 200
+    workers: int = 4
 
 
 class ChatContextBody(BaseModel):
@@ -625,6 +632,32 @@ def chat_session_delete(session_id: str):
 @app.get("/api/chat/messages")
 def chat_messages(session_id: str = "default"):
     return {"messages": db.list_chat_messages(session_id)}
+
+
+@app.post("/api/pdf/render")
+def pdf_render(body: PdfRenderBody):
+    try:
+        return pdf_cache.start(body.path, dpi=body.dpi, workers=body.workers)
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.get("/api/pdf/render/{job_id}")
+def pdf_render_status(job_id: str):
+    try:
+        return pdf_cache.status(job_id)
+    except KeyError:
+        raise HTTPException(404, "render job not found")
+
+
+@app.get("/api/pdf/page/{job_id}/{page}")
+def pdf_page(job_id: str, page: int):
+    try:
+        return FileResponse(pdf_cache.page_file(job_id, page))
+    except KeyError:
+        raise HTTPException(404, "render job not found")
+    except FileNotFoundError:
+        raise HTTPException(404, "page not ready")
 
 
 @app.get("/api/chat/export")

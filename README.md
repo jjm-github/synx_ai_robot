@@ -232,6 +232,9 @@ README — лежат под задачей, в папке бота, назна�
 - PDF проверяется: число страниц, A4 842×595 pt, пустые страницы.
 - 300 dpi поддерживается (страницы остаются A4 по точкам, картинка рендерится
   с 300 dpi).
+- PDF-просмотр в роботе: `pdf_render_pages` параллельно рендерит все страницы
+  в кэш PNG (`data/pdf_cache/...`), а встроенный viewer показывает уже готовые
+  страницы с зумом/панорамой, не дожидаясь полной загрузки PDF.
 - Пересборка по базовой версии: если пользователь говорит «версия 13,
   исправь…», робот берёт кадры задачи и вызывает `publish_daily_pdf` с
   `base_version`, `dpi`, `text_scale`, `image_valign`, `background`, не
@@ -256,6 +259,12 @@ checkpoints/loras/vae), `list_local_models`, `search_custom_nodes`,
 
 Альтернативы ComfyUI MCP: официальный `Comfy-Org/comfy-mcp` (локальный контроль,
 download по URL) и `ConstantineB6/comfy-pilot` (редактирование live-графа).
+
+Робот также умеет создавать сущности и задачи через synx API:
+`synx_create_entity` (asset/shot, с автоподбором кода `asset_type` по label),
+`synx_create_task` (с назначением бота) и `synx_asset_types`/`synx_task_types`
+для проверки допустимых типов. Пример: ассет `main_script` типа `Script` в
+`test_proekt_vfx` с описанием «разработка главного сценария фильма».
 
 ## Synx API для робота
 
