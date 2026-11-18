@@ -1202,6 +1202,11 @@ def _entity_create_request(text: str) -> dict[str, Any] | None:
 
 def _pdf_remix_request(text: str) -> dict[str, Any] | None:
     low = (text or "").lower()
+    # Text deliverables are handled by make_text_pdf / publish_text_document,
+    # not by the frame-layout remix pipeline.
+    if re.search(r"(из\s+текста|текстов(?:ый|ого|ом)\s+pdf|markdown|\.md\b|"
+                 r"документ|сценари|план[ае]?\s+сери)", low):
+        return None
     has_pdf = bool(re.search(r"(pdf|пдф)", low, re.I))
     layout = any(k in low for k in ("черн", "чёрн", "dpi", "текст", "центр", "поля",
                                     "кадр", "страниц", "лист", "верси"))
