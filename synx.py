@@ -177,12 +177,87 @@ class SynxClient:
         if r.status_code >= 400:
             raise SynxError(f"task status {task_id}: {r.status_code} {r.text[:300]}")
 
-    def task_comment(self, task_id: str, body: str) -> dict[str, Any]:
-        r = self.s.post(f"{self.base}/api/tasks/{task_id}/comments",
-                        data={"body": body}, timeout=30)
+    def _post_comment(self, path: str, body: str,
+                      files: list[str | Path] | None = None) -> dict[str, Any]:
+        """POST a comment, optionally with file attachments (multipart)."""
+        handles: list[Any] = []
+        try:
+            if files:
+                # requests expects one (field, file-description) pair per file;
+                # a dict value must not be a list of tuples.
+                payload: list[tuple[str, tuple[str, Any, str, dict[str, str]]]] = []
+                for f in files:
+                    fp = Path(f)
+                    if not fp.is_file():
+                        continue
+                    fh = fp.open("rb")
+                    handles.append(fh)
+                    payload.append(("files", (fp.name, fh,
+                                              mimetypes.guess_type(fp.name)[0]
+                                              or "application/octet-stream", {})))
+                r = self.s.post(self.base + path, data={"body": body},
+                                files=payload or None, timeout=300)
+            else:
+                r = self.s.post(self.base + path, data={"body": body}, timeout=30)
+        finally:
+            for fh in handles:
+                try:
+                    fh.close()
+                except Exception:
+                    pass
         if r.status_code >= 400:
-            raise SynxError(f"task comment {task_id}: {r.status_code} {r.text[:300]}")
+            raise SynxError(f"comment {path}: {r.status_code} {r.text[:300]}")
         return r.json()
+
+    def task_comment(self, task_id: str, body: str,
+                     files: list[str | Path] | None = None) -> dict[str, Any]:
+        return self._post_comment(f"/api/tasks/{task_id}/comments", body, files)
+
+    def entity_comment(self, entity_id: str, body: str,
+                       files: list[str | Path] | None = None) -> dict[str, Any]:
+        return self._post_comment(f"/api/entities/{entity_id}/comments", body, files)
+
+    def version_comment(self, version_id: str, body: str,
+                        files: list[str | Path] | None = None) -> dict[str, Any]:
+        return self._post_comment(f"/api/versions/{version_id}/comments", body, files)
+
+    def create_publication(self, task_id: str, files: list[str | Path],
+                           comment: str = "", minutes: int = 1,
+                           note: str = "robot") -> dict[str, Any]:
+        """Attach files to a task as a publication (any file type, incl. .md)."""
+        handles: list[Any] = []
+        payload: list[tuple[str, tuple[str, Any, str, dict[str, str]]]] = []
+        try:
+            for f in files:
+                fp = Path(f)
+                if not fp.is_file():
+                    continue
+                fh = fp.open("rb")
+                handles.append(fh)
+                payload.append(("files", (fp.name, fh,
+                                          mimetypes.guess_type(fp.name)[0]
+                                          or "application/octet-stream", {})))
+            if not payload:
+                raise SynxError("create_publication: no files")
+            r = self.s.post(f"{self.base}/api/tasks/{task_id}/publications",
+                            data={"comment": comment, "minutes": str(int(minutes)),
+                                  "note": note},
+                            files=payload, timeout=300)
+        finally:
+            for fh in handles:
+                try:
+                    fh.close()
+                except Exception:
+                    pass
+        if r.status_code >= 400:
+            raise SynxError(f"publication {task_id}: {r.status_code} {r.text[:400]}")
+        return r.json()
+
+    def task_publications(self, task_id: str) -> list[dict[str, Any]]:
+        r = self.s.get(f"{self.base}/api/tasks/{task_id}/publications", timeout=60)
+        if r.status_code >= 400:
+            raise SynxError(f"publications {task_id}: {r.status_code} {r.text[:300]}")
+        return (r.json() or {}).get("publications") or []
 
     def publish_version(self, entity_id: str, file_path: str | Path, task_id: str,
                         comment: str = "", minutes: int = 1, note: str = "robot") -> dict[str, Any]:

@@ -69,6 +69,19 @@
 - `POST /api/tasks/{task_id}/assignments` — назначить исполнителей.
 - `PATCH /api/tasks/{task_id}/priority` — приоритет; `/budget` — бюджет.
 
+## Вложения и публикации задач
+
+- Комментарии (`/api/tasks/{id}/comments`, `/api/entities/{id}/comments`,
+  `/api/versions/{id}/comments`, multipart `body` + `files`) принимают
+  **только картинки**. Попытка приложить `.md` → 422 «К комментарию можно
+  приложить только картинку».
+- Любые файлы (`.md`, `.txt`, `.json`, PDF) прикрепляются **публикацией**
+  к задаче: `POST /api/tasks/{task_id}/publications` (multipart `files`,
+  `comment`, `minutes`, `note`). Ответ содержит `publication_code` (p001…),
+  `files[].name/file_url/pretty_url`. Список — `GET` того же пути.
+- Для текстового документа: версия = текстовый PDF, исходник `.md` —
+  публикацией задачи с комментарием.
+
 ## Запись
 
 - `POST /api/entities/{entity_id}/tasks` JSON:

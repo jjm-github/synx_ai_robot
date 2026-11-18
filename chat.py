@@ -16,6 +16,7 @@ from PIL import Image
 
 import comfy_server
 import db
+import doc_flow
 import fs_tools
 import mcp_manager
 import mcp_runtime
@@ -23,6 +24,7 @@ import pdf_cache
 import publish_flow
 import synx_tools
 import system_info
+import text_pdf
 from ai import AIClient, AIError, _data_url
 from config import ROOT, load_config
 from workflows import flux3_i2v, flux3_t2i
@@ -200,6 +202,22 @@ project, name, entity_kind (`asset`/`shot`), `asset_type` (можно label, и�
 Для «создай задачу» — `synx_create_task` с project, shot/entity, task_name,
 task_type (список — `synx_task_types`), assignee и comment. Не ходи по кругу
 через fs_list/synx_versions/verify_pdf: это операции записи, а не поиска.
+
+## Текстовые документы (сценарии, планы, .md)
+
+- Текстовый документ публикуй через `publish_text_document`: он собирает
+  **векторный текстовый PDF** (настоящий выделяемый текст, белый фон,
+  встроенные DejaVu), проверяет извлекаемость текста и публикует версию.
+- НИКОГДА не перегоняй текст в картинки и не используй для текста чёрный
+  daily-фон: чёрные страницы — только для PDF из кадров.
+- Отдельный PDF без публикации — `make_text_pdf` (markdown → text PDF).
+- Исходные .md/.txt/.json прикрепляй публикацией к задаче: параметр
+  `attach_files` у `publish_text_document` или `synx_attach_files`
+  (`target=task`, `target_id=<task_id>`). Synx принимает в комментарии
+  только картинки, поэтому текстовые файлы идут публикацией (p001, p002…)
+  и видны в задаче вместе с комментарием.
+- После публикации проверь `media.kind`, число страниц и что `pdftotext`
+  извлекает текст (инструмент делает это сам).
 
 ## Daily PDF
 
@@ -717,6 +735,55 @@ MCP_TOOLS = [
     }},
 ]
 
+TEXT_DOC_TOOLS = [
+    {"type": "function", "function": {
+        "name": "make_text_pdf",
+        "description": ("Build a PDF from text/markdown with REAL selectable text, white pages "
+                        "and embedded fonts (reportlab). Never renders text into bitmaps. "
+                        "Use this for scripts, plans, .md documents — not the image/PDF pipeline."),
+        "parameters": {"type": "object", "properties": {
+            "text": {"type": "string", "description": "Markdown or plain text"},
+            "path": {"type": "string", "description": "Output .pdf path (optional)"},
+            "title": {"type": "string"},
+            "page_size": {"type": "string", "enum": ["A4", "A3", "LETTER"], "default": "A4"},
+            "font_size": {"type": "number", "default": 10.5},
+        }, "required": ["text"]},
+    }},
+    {"type": "function", "function": {
+        "name": "publish_text_document",
+        "description": ("Publish a text document as a synx version: builds a vector text PDF "
+                        "(or uses pdf_path), verifies that text is extractable, publishes from "
+                        "the chosen bot, attaches the .md and extra files to the version comment. "
+                        "Use for scripts/plans/documents instead of publish_images_as_version."),
+        "parameters": {"type": "object", "properties": {
+            "project": {"type": "string"},
+            "entity": {"type": "string", "description": "Asset/shot name, e.g. main_script"},
+            "text": {"type": "string", "description": "Markdown source (optional if pdf_path)"},
+            "pdf_path": {"type": "string", "description": "Existing text PDF (optional)"},
+            "title": {"type": "string"},
+            "task_name": {"type": "string", "description": "e.g. write_script"},
+            "task_type": {"type": "string", "description": "e.g. Script"},
+            "bot": {"type": "string", "description": "Bot login, e.g. a.smirnov"},
+            "comment": {"type": "string"},
+            "attach_files": {"type": "array", "items": {"type": "string"},
+                             "description": "Files to attach to the version comment (.md, .json, ...)"},
+            "page_size": {"type": "string", "enum": ["A4", "A3", "LETTER"], "default": "A4"},
+        }, "required": ["project", "entity"]},
+    }},
+    {"type": "function", "function": {
+        "name": "synx_attach_files",
+        "description": ("Attach files in synx. target=task -> task publication (any file type, "
+                        "use for .md/.txt/.json/PDF); target=version|entity -> comment "
+                        "(images only, synx rejects other types)."),
+        "parameters": {"type": "object", "properties": {
+            "target": {"type": "string", "enum": ["version", "task", "entity"]},
+            "target_id": {"type": "string"},
+            "body": {"type": "string"},
+            "files": {"type": "array", "items": {"type": "string"}},
+        }, "required": ["target", "target_id", "files"]},
+    }},
+]
+
 COMFY_SERVER_TOOLS = [
     {"type": "function", "function": {
         "name": "comfyui_status",
@@ -766,7 +833,7 @@ WEB_TOOLS = [
     }},
 ]
 
-TOOLS = [IMAGE_TOOL, VERSION_GEN_TOOL, PDF_TOOL, PDF_RENDER_TOOL, VERIFY_PDF_TOOL, REPAIR_PDF_TOOL, DAILY_PDF_TOOL, PUBLISH_TOOL, FFMPEG_TOOL] + COMFY_SERVER_TOOLS + WEB_TOOLS + MCP_TOOLS + SYNX_TOOLS + FS_TOOLS
+TOOLS = [IMAGE_TOOL, VERSION_GEN_TOOL, PDF_TOOL, PDF_RENDER_TOOL, VERIFY_PDF_TOOL, REPAIR_PDF_TOOL, DAILY_PDF_TOOL, PUBLISH_TOOL, FFMPEG_TOOL] + TEXT_DOC_TOOLS + COMFY_SERVER_TOOLS + WEB_TOOLS + MCP_TOOLS + SYNX_TOOLS + FS_TOOLS
 GEN_RE = re.compile(
     r"(нарисуй|сгенер|сгенерируй|сделай\s+(картин|изображ|кадр|арт)|"
     r"draw|generate\s+(an?\s+)?image|make\s+(an?\s+)?image|create\s+(an?\s+)?image)",
@@ -1824,6 +1891,45 @@ def _web_research(text: str, ai: Any, emit: Any, usage: dict[str, int]) -> dict[
             "pages": pages, "context": "\n\n".join(blocks)[:24000]}
 
 
+def _publish_guard(session_id: str, args: dict[str, Any]
+                   ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Check that publishing is allowed and align the target with the focus.
+
+    Returns (args_to_use, error). Publishing requires an explicit request
+    remembered for the session; a target named by the user in recent messages
+    is allowed and becomes the new focus.
+    """
+    sid = session_id or "default"
+    focus = db.get_chat_focus(sid) or {}
+    intent = bool(focus.get("publish_intent")) or _publish_intent(str(focus.get("last_text") or ""))
+    if not intent:
+        return None, {"error": "publish_not_requested",
+                      "message": ("Пользователь не просил публиковать версию. Собери PDF и "
+                                  "покажи результат; публикуй только по явной команде "
+                                  "«опубликуй», «сделай версию», «запушь», «сделай публикацию».")}
+    out = dict(args)
+    fshot = str(focus.get("shot") or "")
+    requested = str(out.get("shot") or out.get("entity") or "").strip()
+    if fshot:
+        if requested and requested.lower() != fshot.lower():
+            if _user_named_target(sid, requested):
+                db.set_chat_focus(sid, shot=requested)
+            else:
+                return None, {"error": "focus_mismatch",
+                              "message": (f"Текущий фокус — {fshot}, а выбран {requested}. "
+                                          "Пользователь не называл эту цель в последних "
+                                          "сообщениях. Если цель верная, назови её текстом: "
+                                          "«фокус: <проект>/<сущность>».")}
+        elif not requested:
+            out.setdefault("shot", fshot)
+            out.setdefault("entity", fshot)
+            if focus.get("project") and not out.get("project"):
+                out["project"] = focus["project"]
+            if focus.get("version") and not out.get("version"):
+                out["version"] = focus["version"]
+    return out, None
+
+
 def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
                   progress=None, session_id: str | None = None
                   ) -> tuple[Any, list[dict[str, Any]], str | None]:
@@ -1919,8 +2025,7 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
         return result, [], None
     if name == "publish_daily_pdf":
         focus = db.get_chat_focus(session_id or "default") or {}
-        intent = bool(focus.get("publish_intent")) or _publish_intent(str(focus.get("last_text") or ""))
-        if not intent:
+        if not (bool(focus.get("publish_intent")) or _publish_intent(str(focus.get("last_text") or ""))):
             return {"error": "publish_not_requested",
                     "message": ("Пользователь не просил публиковать версию. Собери PDF и "
                                 "покажи результат; публикуй только по явной команде.")}, [], None
@@ -1986,36 +2091,77 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
             publish=bool(args.get("publish", True)), bot_login=args.get("bot"),
             progress=progress)
         return result, [], None
+    if name == "make_text_pdf":
+        try:
+            title = args.get("title") or "document"
+            out = Path(str(args.get("path") or ""))
+            if not out:
+                out = CHAT_DIR / "pdf" / (re.sub(r"[^A-Za-z0-9_.-]+", "_", title)[:60] + ".pdf")
+            info = text_pdf.make_text_pdf(
+                args.get("text") or "", out, title=title,
+                page_size=args.get("page_size") or "A4",
+                font_size=float(args.get("font_size") or 10.5))
+            return info, [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
+    if name == "publish_text_document":
+        args, err = _publish_guard(session_id or "default", args)
+        if err:
+            return err, [], None
+        try:
+            result = doc_flow.publish_text_document(
+                args.get("project") or "",
+                args.get("entity") or args.get("shot") or "",
+                text=args.get("text"),
+                pdf_path=args.get("pdf_path"),
+                title=args.get("title"),
+                task_name=args.get("task_name"),
+                task_type=args.get("task_type"),
+                bot_login=args.get("bot"),
+                comment=args.get("comment") or "",
+                attach_files=args.get("attach_files") or [],
+                page_size=args.get("page_size") or "A4",
+                font_size=float(args.get("font_size") or 10.5),
+                progress=progress)
+            return result, [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
+    if name == "synx_attach_files":
+        try:
+            from synx import SynxClient
+            cfg = load_config()
+            client = SynxClient(cfg["synx"]["base_url"], cfg["synx"]["login"],
+                                cfg["synx"]["password"])
+            target = str(args.get("target") or "task").lower()
+            tid = str(args.get("target_id") or "")
+            files = [str(f) for f in (args.get("files") or []) if Path(str(f)).is_file()]
+            if not files:
+                return {"error": "files is empty or not found"}, [], None
+            body = args.get("body") or "Файлы: " + ", ".join(Path(f).name for f in files)
+            if target == "task":
+                pub = client.create_publication(tid, files, comment=body,
+                                               note="Synx AI Robot attachment")
+                return {"ok": True, "target": "task", "publication": pub,
+                        "publication_code": pub.get("publication_code"),
+                        "files": pub.get("files")}, [], None
+            image_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif"}
+            if not all(Path(f).suffix.lower() in image_exts for f in files):
+                return {"error": "synx_comments_images_only",
+                        "message": ("synx принимает в комментарии только картинки. "
+                                    "Текстовые файлы прикрепляй публикацией к задаче: "
+                                    "target=task, target_id=<task_id>.")}, [], None
+            fn = {"version": client.version_comment,
+                  "entity": client.entity_comment}.get(target)
+            if not fn:
+                return {"error": "target must be task|version|entity"}, [], None
+            return {"ok": True, "target": target, "target_id": tid,
+                    "comment": fn(tid, body, files=files)}, [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
     if name == "publish_images_as_version":
-        focus = db.get_chat_focus(session_id or "default") or {}
-        intent = bool(focus.get("publish_intent")) or _publish_intent(str(focus.get("last_text") or ""))
-        if not intent:
-            return {"error": "publish_not_requested",
-                    "message": ("Пользователь не просил публиковать версию. Собери PDF и "
-                                "покажи результат; публикуй только по явной команде "
-                                "«опубликуй», «сделай версию», «запушь».")}, [], None
-        args = dict(args)
-        fshot = str(focus.get("shot") or "")
-        requested = str(args.get("shot") or "").strip()
-        if fshot:
-            if requested and requested.lower() != fshot.lower():
-                if _user_named_target(session_id or "default", requested):
-                    # the user named this target in chat — switch the focus
-                    # instead of blocking the publication
-                    db.set_chat_focus(session_id or "default", shot=requested)
-                    fshot = requested
-                else:
-                    return {"error": "focus_mismatch",
-                            "message": (f"Текущий фокус — {fshot}, а выбран {requested}. "
-                                        "Перечитай запрос: пользователь называл другую цель. "
-                                        "Если цель верная — пусть пользователь подтвердит "
-                                        "её текстом («фокус: <проект>/<сущность>).")}, [], None
-            elif not requested:
-                args.setdefault("shot", fshot)
-                if focus.get("project"):
-                    args["project"] = focus["project"]
-                if focus.get("version") and not args.get("version"):
-                    args["version"] = focus["version"]
+        args, err = _publish_guard(session_id or "default", args)
+        if err:
+            return err, [], None
         explicit = None
         if args.get("image_source") == "paths":
             explicit = [{"path": p} for p in (args.get("image_paths") or [])]
