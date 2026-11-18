@@ -150,6 +150,11 @@ PDF на стандартных страницах, проверит его и �
   задача, исходные данные, формат сдачи, стиль, что сдать, критерии приёмки.
   Заглушки вида «Art task for ...» недопустимы.
 - Если ТЗ нет — заполни его через `synx_update_entity` (info) и `synx_task_comment`.
+- СВЯЗИ: `EntityCreate` игнорирует `linked_asset_ids`/`task_types`. После создания
+  ассетов связывай их через `synx_link_assets` (PATCH, в обе стороны): каждая
+  локация → все её объекты и персонажи, каждый объект/персонаж → все его
+  локации. Объект, который встречается в нескольких локациях, линкуй ко всем.
+  Проверяй, что `linked_assets` не пуст.
 - Удаление сущностей — только по явной просьбе («удали ассет/шот X», «удали все
   ассеты, что создал робот»). Сначала найди и покажи список (id, имя, тип,
   версии/задачи), затем вызывай `synx_delete_entity`. Непустые сущности
@@ -589,6 +594,23 @@ SYNX_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "synx_link_assets",
+            "description": ("Link assets in synx. EntityCreate ignores linked_asset_ids, so links "
+                            "are written by PATCH here, in both directions by default. Use for "
+                            "location <-> objects/characters. Multi-location assets get all links."),
+            "parameters": {"type": "object", "properties": {
+                "project": {"type": "string"},
+                "entity": {"type": "string", "description": "Entity name, e.g. loc_ocean_seiner"},
+                "linked": {"type": "array", "items": {"type": "string"},
+                           "description": "Names of assets to link (objects/characters/locations)"},
+                "bidirectional": {"type": "boolean", "default": True},
+                "replace": {"type": "boolean", "default": False},
+            }, "required": ["project", "entity", "linked"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "synx_update_entity",
             "description": ("Update an entity: info (the ТЗ/description), display_name, "
                             "asset_type. Use to fill a missing ТЗ instead of leaving it empty."),
@@ -598,6 +620,8 @@ SYNX_TOOLS = [
                 "info": {"type": "string", "description": "Full technical description (ТЗ)"},
                 "display_name": {"type": "string"},
                 "asset_type": {"type": "string"},
+                "linked_assets": {"type": "array", "items": {"type": "string"}},
+                "linked_asset_ids": {"type": "array", "items": {"type": "string"}},
             }, "required": ["project", "name"]},
         },
     },
@@ -663,6 +687,9 @@ SYNX_TOOLS = [
                 "cut_out": {"type": "integer"},
                 "task_types": {"type": "array", "items": {"type": "string"}},
                 "skill_codes": {"type": "array", "items": {"type": "string"}},
+                "task_name": {"type": "string", "description": "Task name (slug = folder name; defaults to entity name)"},
+                "linked_assets": {"type": "array", "items": {"type": "string"},
+                                  "description": "Assets to link (links are written by PATCH after creation)"},
             }, "required": ["project", "name"]},
         },
     },
@@ -2105,7 +2132,17 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
                 args.get("project") or "", args.get("name") or "",
                 args.get("entity_kind") or "asset", args.get("asset_type"),
                 args.get("info"), args.get("display_name"), args.get("cut_in"),
-                args.get("cut_out"), args.get("task_types"), args.get("skill_codes")), [], None
+                args.get("cut_out"), args.get("task_types"), args.get("skill_codes"),
+                args.get("task_name"), args.get("linked_assets")), [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
+    if name == "synx_link_assets":
+        try:
+            return synx_tools.link_assets(
+                args.get("project") or "", args.get("entity") or "",
+                list(args.get("linked") or []),
+                bool(args.get("bidirectional", True)),
+                bool(args.get("replace", False))), [], None
         except Exception as exc:
             return {"error": str(exc)}, [], None
     if name == "synx_update_entity":
@@ -2113,7 +2150,8 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
             return synx_tools.update_entity(
                 args.get("project") or "", args.get("name") or "",
                 args.get("info"), args.get("display_name"),
-                args.get("asset_type")), [], None
+                args.get("asset_type"), args.get("linked_asset_ids"),
+                args.get("linked_assets")), [], None
         except Exception as exc:
             return {"error": str(exc)}, [], None
     if name == "synx_task_comment":

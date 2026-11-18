@@ -402,7 +402,8 @@ def create_entity(project: str, name: str, entity_kind: str = "asset",
                   display_name: str | None = None, cut_in: int | None = None,
                   cut_out: int | None = None, task_types: list[str] | None = None,
                   skill_codes: list[str] | None = None,
-                  task_name: str | None = None) -> dict[str, Any]:
+                  task_name: str | None = None,
+                  linked_assets: list[str] | None = None) -> dict[str, Any]:
     c = client()
     p = _project(c, project)
     entity_kind = "shot" if str(entity_kind).lower() == "shot" else "asset"
@@ -451,9 +452,18 @@ def create_entity(project: str, name: str, entity_kind: str = "asset",
                                   "task_type": t.get("task_type")})
         except Exception:
             pass
+    linked = []
+    if linked_assets:
+        # EntityCreate ignores linked_asset_ids; links are written by PATCH.
+        try:
+            lr = link_assets(project, name, linked_assets)
+            e = next((x for x in c.entities(p["id"]) if x["id"] == e["id"]), e)
+            linked = lr.get("linked") or []
+        except Exception:
+            linked = []
     e["tasks"] = created_tasks
     return {"ok": True, "exists": False, "entity": e,
-            "tasks": created_tasks,
+            "tasks": created_tasks, "linked": linked,
             "url": _entity_url(c.base, p.get("alias"), e)}
 
 
@@ -511,8 +521,10 @@ def entities(project: str, entity_kind: str | None = None,
 
 def update_entity(project: str, name: str, info: str | None = None,
                   display_name: str | None = None,
-                  asset_type: str | None = None) -> dict[str, Any]:
-    """Update entity fields (ТЗ, display name, asset type)."""
+                  asset_type: str | None = None,
+                  linked_asset_ids: list[str] | None = None,
+                  linked_assets: list[str] | None = None) -> dict[str, Any]:
+    """Update entity fields (ТЗ, display name, asset type, links)."""
     c = client()
     p = _project(c, project)
     e = find_entity(project, name)
@@ -531,10 +543,47 @@ def update_entity(project: str, name: str, info: str | None = None,
         if not resolved:
             raise ValueError(f"unknown asset_type: {asset_type}")
         payload["asset_type"] = resolved
+    if linked_assets:
+        payload["linked_asset_ids"] = [find_entity(project, n)["id"] for n in linked_assets]
+    elif linked_asset_ids is not None:
+        payload["linked_asset_ids"] = list(linked_asset_ids)
     if not payload:
         raise ValueError("nothing to update")
     updated = c.update_entity(e["id"], payload)
     return {"ok": True, "entity": updated}
+
+
+def link_assets(project: str, name: str, linked: list[str],
+                bidirectional: bool = True,
+                replace: bool = False) -> dict[str, Any]:
+    """Link an entity to assets by name; the API stores one direction, so by
+    default the reverse links are written too."""
+    c = client()
+    p = _project(c, project)
+    e = find_entity(project, name)
+    targets = [find_entity(project, n) for n in linked if str(n).strip()]
+    ids = [t["id"] for t in targets if t["id"] != e["id"]]
+    current = list(e.get("linked_asset_ids") or [])
+    new_ids = ids if replace else list(dict.fromkeys(current + ids))
+    updated = c.update_entity(e["id"], {"linked_asset_ids": new_ids})
+    reverse = []
+    if bidirectional:
+        for t in targets:
+            if t["id"] == e["id"]:
+                continue
+            tcur = list(t.get("linked_asset_ids") or [])
+            if e["id"] in tcur:
+                continue
+            try:
+                c.update_entity(t["id"], {"linked_asset_ids": tcur + [e["id"]]})
+                reverse.append(t.get("name"))
+            except Exception:
+                pass
+    fresh = next((x for x in c.entities(p["id"]) if x["id"] == e["id"]), updated)
+    return {"ok": True, "entity": fresh.get("name"),
+            "linked": [x.get("name") for x in (fresh.get("linked_assets") or [])],
+            "linked_ids": fresh.get("linked_asset_ids") or [],
+            "reverse": reverse}
 
 
 def delete_entity(project: str, name: str | None = None,
