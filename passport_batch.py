@@ -132,55 +132,77 @@ def run(project: str, locations: list[str], views: int = 9,
     report: dict[str, Any] = {"started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                               "total": total, "done": 0, "items": [], "errors": []}
     _status(report)
-    for idx, e in enumerate(all_locs, 1):
+    def process_one(e: dict[str, Any], idx: int) -> dict[str, Any]:
         name = e["name"]
         disp = e.get("display_name") or name
         _log(f"[{idx}/{total}] {name}")
         paths: list[Path] = []
+        for vi, (suffix, angle) in enumerate(VIEWS[:views], 1):
+            desc = LOCATION_PROMPTS.get(name, disp)
+            prompt = (f"Concept art of {desc}. {angle}. Animated feature background "
+                      "painting, watercolor and gouache, detailed environment, "
+                      "cinematic composition, no people, no text, no logos")
+            _log(f"  view {vi}/{views}: {suffix}")
+            gen = chat.generate_image(
+                prompt, NEG, [],
+                options={"workflow": "flux3_t2i", "width": 1536, "height": 864,
+                         "steps": 26, "cfg": 2.0, "seed": 20261117 + vi})
+            if not gen:
+                raise RuntimeError("no image returned")
+            paths.append(Path(gen[0]["path"]))
+        preview = contact_sheet(
+            paths, ROOT / "data" / "chat" / "pdf" / f"{name}_preview.png",
+            f"{disp} — {len(paths)} views")
+        from paths import task_work_dir
+        versions = client.versions(e["id"])
+        next_ver = max([int(v.get("version_number") or 0) for v in versions] + [0]) + 1
+        work = task_work_dir(cfg, project, name, "", "Concept", bot,
+                             "location_develop", next_ver, entity_kind="asset")
+        work.mkdir(parents=True, exist_ok=True)
+        pdf = work / f"location_develop_v{next_ver:03d}.pdf"
+        publish_flow.make_pdf([preview, *paths], pdf, page_size=page_size,
+                              dpi=144, margin_mm=8)
+        info = publish_flow.verify_pdf(pdf)
+        if not info.get("ok"):
+            raise RuntimeError("pdf check: " + "; ".join(info.get("errors") or []))
+        res = doc_flow.publish_pdf_as_version(
+            project, name, pdf, task_name="location_develop", task_type="Concept",
+            bot_login=bot,
+            comment=(f"Паспорт локации: {disp} — {len(paths)} видов + превью, "
+                     f"{info.get('pages')} стр., A3."))
+        item = {"location": name, "version": res.get("version_code"),
+                "url": res.get("url"), "pages": info.get("pages"),
+                "views": len(paths)}
+        report["items"].append(item)
+        report["done"] = len(report["items"])
+        _status(report)
+        _log(f"  published {res.get('version_code')} ({info.get('pages')} pages)")
+        return item
+
+    for idx, e in enumerate(all_locs, 1):
         try:
-            for vi, (suffix, angle) in enumerate(VIEWS[:views], 1):
-                desc = LOCATION_PROMPTS.get(name, disp)
-                prompt = (f"Concept art of {desc}. {angle}. Animated feature background "
-                          "painting, watercolor and gouache, detailed environment, "
-                          "cinematic composition, no people, no text, no logos")
-                _log(f"  view {vi}/{views}: {suffix}")
-                gen = chat.generate_image(
-                    prompt, NEG, [],
-                    options={"workflow": "flux3_t2i", "width": 1536, "height": 864,
-                             "steps": 26, "cfg": 2.0, "seed": 20261117 + vi})
-                if not gen:
-                    raise RuntimeError("no image returned")
-                paths.append(Path(gen[0]["path"]))
-            preview = contact_sheet(
-                paths, ROOT / "data" / "chat" / "pdf" / f"{name}_preview.png",
-                f"{disp} — {len(paths)} views")
-            from paths import task_work_dir
-            versions = client.versions(e["id"])
-            next_ver = max([int(v.get("version_number") or 0) for v in versions] + [0]) + 1
-            work = task_work_dir(cfg, project, name, "", "Concept", bot,
-                                 "location_develop", next_ver, entity_kind="asset")
-            work.mkdir(parents=True, exist_ok=True)
-            pdf = work / f"location_develop_v{next_ver:03d}.pdf"
-            publish_flow.make_pdf([preview, *paths], pdf, page_size=page_size,
-                                  dpi=144, margin_mm=8)
-            info = publish_flow.verify_pdf(pdf)
-            if not info.get("ok"):
-                raise RuntimeError("pdf check: " + "; ".join(info.get("errors") or []))
-            res = doc_flow.publish_pdf_as_version(
-                project, name, pdf, task_name="location_develop", task_type="Concept",
-                bot_login=bot,
-                comment=(f"Паспорт локации: {disp} — {len(paths)} видов + превью, "
-                         f"{info.get('pages')} стр., A3."))
-            report["items"].append({"location": name, "version": res.get("version_code"),
-                                    "url": res.get("url"), "pages": info.get("pages"),
-                                    "views": len(paths)})
-            report["done"] = idx
-            _status(report)
-            _log(f"  published {res.get('version_code')} ({info.get('pages')} pages)")
+            process_one(e, idx)
         except Exception as exc:
-            _log(f"  ERROR {name}: {exc}")
-            report["errors"].append({"location": name, "error": str(exc)[:500]})
+            _log(f"  ERROR {e['name']}: {exc}")
+            report["errors"].append({"location": e["name"], "error": str(exc)[:500]})
             _status(report)
+
+    # One retry pass: ComfyUI may restart or briefly refuse connections.
+    if report["errors"]:
+        failed = [x["location"] for x in report["errors"]]
+        _log(f"retrying failed locations: {failed}")
+        remaining = []
+        for idx, name in enumerate(failed, 1):
+            e = next((x for x in all_locs if x["name"] == name), None)
+            if not e:
+                continue
+            try:
+                process_one(e, idx)
+            except Exception as exc:
+                _log(f"  RETRY ERROR {name}: {exc}")
+                remaining.append({"location": name, "error": str(exc)[:500]})
+        report["errors"] = remaining
+        _status(report)
 
     report["finished_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
     _status(report)
