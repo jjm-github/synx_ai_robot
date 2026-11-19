@@ -9,11 +9,11 @@ The script must contain canonical IDs, e.g.:
 
 Rules:
 - shot name = the canonical `sNNN_MMMM` ID from the script;
-- display_name = the shot thesis (never the S01-04 code);
+- display_name = the canonical shot name (s001_0010), thesis goes to info;
 - info = code · plan, canonical ID · frames, thesis and dialogue;
 - cut_out = cut_in + frames - 1 so `length` equals the script duration;
 - no tasks and no versions are created;
-- shots are linked to their location asset when a mapping is known.
+- shots are linked to the location and to participating characters/props.
 """
 from __future__ import annotations
 
@@ -24,6 +24,103 @@ from typing import Any
 
 from config import load_config
 from synx import SynxClient
+
+CHARACTERS = {
+    "надя": "char_nadya", "сергей": "char_sergey", "лиза": "char_liza",
+    "инна": "char_inna", "корнеев": "char_korneev", "дубров": "char_dubrov",
+    "рыбак": "char_fisherman", "петрович": "char_petrovich",
+}
+
+OBJECT_KEYWORDS = {
+    "obj_balcony": ["балкон"],
+    "obj_bank_clock": ["часы банка", "уличные часы", "банк"],
+    "obj_beacon_lights": ["маячк", "мигалк"],
+    "obj_blanket": ["плед"],
+    "obj_bottle_glass": ["бутылк"],
+    "obj_boxes": ["коробк"],
+    "obj_car_dashboard_clock": ["приборн", "панель авто"],
+    "obj_chicken_coop": ["курятник", "кур"],
+    "obj_cigarette": ["сигарет", "папирос", "курит"],
+    "obj_class_lamps": ["классные лампы", "лампы на потолке"],
+    "obj_class_window": ["окно класса", "классное окно"],
+    "obj_column": ["колонн", "опор"],
+    "obj_column_field": ["колонн", "опор"],
+    "obj_column_sea": ["колонн", "опор"],
+    "obj_column_city": ["колонн", "опор"],
+    "obj_column_sample": ["образец"],
+    "obj_commission_papers": ["комисси", "бумаги комиссии"],
+    "obj_desks": ["парт"],
+    "obj_documents_folder": ["документ", "папк"],
+    "obj_drawings": ["чертеж", "схем"],
+    "obj_embankment_rail": ["парапет", "набережн"],
+    "obj_escalator": ["эскалатор"],
+    "obj_facades": ["фасад"],
+    "obj_farm_papers": ["бумаги по ферме", "бумаг"],
+    "obj_fork_plate": ["вилк", "тарелк"],
+    "obj_furrow": ["борозд"],
+    "obj_grain_sack": ["мешок", "зерн"],
+    "obj_greenhouse": ["теплиц"],
+    "obj_hitchhike_car": ["попутк", "машина"],
+    "obj_instruments": ["прибор"],
+    "obj_kitchen_table": ["кухонный стол", "стол"],
+    "obj_lab_screens": ["экран"],
+    "obj_metro_entrance": ["метро"],
+    "obj_nail_polish": ["лак", "ногт"],
+    "obj_notebook_korneev": ["блокнот"],
+    "obj_pillars_five": ["пять столбов", "столбы"],
+    "obj_placard": ["плакат"],
+    "obj_plowed_field": ["вспаханн"],
+    "obj_podcast_mic": ["микрофон", "подкаст"],
+    "obj_porch": ["крыльц", "ступен"],
+    "obj_power_pole_box": ["щиток", "распределительн", "коробка на столбе"],
+    "obj_radio": ["радио"],
+    "obj_radio_kitchen": ["радио"],
+    "obj_rain_rig": ["ливень", "дождевой риг"],
+    "obj_rescue_bus": ["автобус", "мчс"],
+    "obj_road_barrier": ["огражден", "конус"],
+    "obj_rye_field": ["рожь", "поле ржи"],
+    "obj_rye_strip": ["полоса ржи"],
+    "obj_seed_crate": ["ящик", "рассад"],
+    "obj_seiner": ["сейнер"],
+    "obj_shadow_grid": ["тень-решётк", "решётк"],
+    "obj_shadow_grid_wall": ["стена с решётк", "тень опоры"],
+    "obj_shadow_lamps_shop": ["теневые лампы", "витрин"],
+    "obj_smartphones_crowd": ["телефон", "смартфон"],
+    "obj_sun_picture": ["рисунок солнца", "солнц"],
+    "obj_tablet_dubrov": ["планшет"],
+    "obj_traffic_lights": ["светофор"],
+    "obj_train": ["поезд"],
+    "obj_train_window": ["окно вагона", "стекло вагона"],
+    "obj_tv_set": ["телевизор", "тв"],
+    "obj_water_glass": ["стакан с водой", "вода в стакане", "стакан"],
+    "obj_wheelhouse_lights": ["ходовые огни", "рубка"],
+    "obj_window_dark": ["тёмное окно", "окно"],
+    "obj_window_frame": ["оконная рама", "окно"],
+}
+
+
+def assets_for_text(text: str, loc_name: str | None,
+                    entities: dict[str, dict[str, Any]]) -> list[str]:
+    """Return asset names participating in a shot (location, characters, props)."""
+    low = (text or "").lower()
+    out: list[str] = []
+    loc = entities.get(loc_name or "")
+    if loc:
+        out.append(loc_name)
+    for stem, name in CHARACTERS.items():
+        if stem in low and name in entities and name not in out:
+            out.append(name)
+    for name, stems in OBJECT_KEYWORDS.items():
+        e = entities.get(name)
+        if not e or name in out:
+            continue
+        linked = e.get("linked_asset_ids") or []
+        if loc and linked and loc["id"] not in linked:
+            continue
+        if any(st in low for st in stems):
+            out.append(name)
+    return out
+
 
 PILOT_LOCATION_MAP = {
     "s001": "loc_ocean_seiner", "s002": "loc_ferma_gordeevy",
@@ -140,13 +237,13 @@ def create_structure(project: str, script_path: str | Path, *,
         info = (f"{sh['code']} · {sh['plan']}\n{sh['name']} · {sh['frames']} кадров\n\n"
                 f"{sh['body']}").strip()
         payload = {"entity_kind": "shot", "name": sh["name"],
-                   "display_name": sh["display_name"] or sh["name"], "info": info,
+                   "display_name": sh["name"], "info": info,
                    "cut_in": cut_in, "cut_out": cut_out}
         existing = entities.get(sh["name"])
         try:
             if existing:
                 client.update_entity(existing["id"], {
-                    "display_name": payload["display_name"], "info": info,
+                    "display_name": sh["name"], "info": info,
                     "cut_in": cut_in, "cut_out": cut_out})
                 shot = existing
                 updated += 1
@@ -159,10 +256,11 @@ def create_structure(project: str, script_path: str | Path, *,
             continue
         if link_locations:
             loc_name = loc_map.get(seq)
-            loc = entities.get(loc_name) if loc_name else None
-            if loc and not (shot.get("linked_asset_ids") or []):
+            wanted = assets_for_text(f"{sh['display_name']}\n{sh['body']}", loc_name, entities)
+            ids = [entities[n]["id"] for n in wanted if n in entities]
+            if ids:
                 try:
-                    client.update_entity(shot["id"], {"linked_asset_ids": [loc["id"]]})
+                    client.update_entity(shot["id"], {"linked_asset_ids": ids})
                 except Exception:
                     pass
         if create_folders:
@@ -186,7 +284,7 @@ def create_structure(project: str, script_path: str | Path, *,
         info = (f"Секвенция {code} · {sq['heading']}\n{sq['timing']}\n"
                 f"Шотов: {sum(1 for m in made if m['seq'] == code)} · Кадров: {total}")
         try:
-            client.update_entity(se["id"], {"display_name": sq["heading"], "info": info})
+            client.update_entity(se["id"], {"display_name": code, "info": info})
         except Exception:
             pass
 

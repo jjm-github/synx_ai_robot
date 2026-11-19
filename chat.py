@@ -175,9 +175,10 @@ PDF на стандартных страницах, проверит его и �
   Секцию бери из запроса (например TEST_PROJ), не спрашивай.
 - Структура шотов из сценария — `create_shots_from_script` (или сообщение
   «создай структуру шотов по сценарию»). Имена — канонические ID из строк
-  `s001_0010 · 200 кадров`; display_name — тезис шота, не код `S01-04`;
-  `cut_out = cut_in + кадры - 1`; задачи и версии НЕ создаются; шоты линкуются
-  к локациям. Не придумывай имена и не создавай лишние шоты.
+  `s001_0010 · 200 кадров`; display_name РАВЕН имени шота (чтобы в списке были
+  имена s001_0010…), тезис и диалоги — в `info`; `cut_out = cut_in + кадры - 1`;
+  задачи и версии НЕ создаются; шоты линкуются к локации и к участвующим
+  персонажам/объектам из сцены. Не придумывай имена и лишние шоты.
 - «По 9 видов + 1 превью на локацию» / «паспорт 10 страниц» = запусти
   `start_passport_batch` (project, locations=all, views=9). Он в фоне генерирует
   9 ракурсов, собирает контактный лист первой страницей и публикует 10-страничный
@@ -956,8 +957,9 @@ TEXT_DOC_TOOLS = [
     {"type": "function", "function": {
         "name": "create_shots_from_script",
         "description": ("Create a synx shot structure from a shot-by-shot script: canonical IDs "
-                        "(s001_0010), thesis as display name, exact frame durations, no tasks or "
-                        "versions, shots linked to their location assets."),
+                        "(s001_0010) as name AND display name, thesis in info, exact frame "
+                        "durations, no tasks/versions, shots linked to location + participating "
+                        "characters/props."),
         "parameters": {"type": "object", "properties": {
             "project": {"type": "string"},
             "script_path": {"type": "string"},
@@ -2942,7 +2944,8 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
             for code in sorted(frames):
                 lines.append(f"- {code}: {frames[code]} кадров")
             lines += ["", f"Всего: **{result.get('total_frames')}** кадров.",
-                      "Задачи и версии не создавались; шоты связаны с локациями."]
+                      "Задачи и версии не создавались; у шотов display_name = имя, "
+                      "связаны локация + участники сцены."]
             if result.get("errors"):
                 lines += ["", "Ошибки: " + "; ".join(
                     f"{e.get('shot')}: {e.get('error')}" for e in result["errors"][:5])]
