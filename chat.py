@@ -2026,19 +2026,48 @@ PROJECT_HINTS = {
     "тестовый проект": "test_proekt_vfx", "test_proekt_vfx": "test_proekt_vfx",
     "экспериментальный проект": "test_proekt_vfx",
     "экспериментальном проекте": "test_proekt_vfx",
+    "синкс": "sinx", "sinx": "sinx",
 }
+
+_PROJECTS_CACHE: dict[str, Any] = {"at": 0.0, "items": []}
+
+
+def _known_projects() -> list[tuple[str, str]]:
+    """(match-key, alias) for all synx projects, cached for 5 minutes."""
+    now = time.time()
+    if _PROJECTS_CACHE.get("items") and now - float(_PROJECTS_CACHE.get("at") or 0) < 300:
+        return _PROJECTS_CACHE["items"]
+    refs: list[tuple[str, str]] = []
+    try:
+        for alias in load_config().get("synx", {}).get("projects") or []:
+            refs.append((str(alias).lower(), str(alias)))
+    except Exception:
+        pass
+    try:
+        from synx import SynxClient
+        cfg = load_config()
+        c = SynxClient(cfg["synx"]["base_url"], cfg["synx"]["login"], cfg["synx"]["password"])
+        for p in c.projects():
+            alias = str(p.get("alias") or "").strip()
+            name = str(p.get("name") or "").strip()
+            if alias:
+                refs.append((alias.lower(), alias))
+            if name and alias:
+                refs.append((name.lower(), alias))
+    except Exception:
+        pass
+    for hint, alias in PROJECT_HINTS.items():
+        refs.append((hint.lower(), alias))
+    # Longest keys first so "sin x" wins over "sinx".
+    refs = sorted(dict(refs).items(), key=lambda kv: -len(kv[0]))
+    _PROJECTS_CACHE.update({"at": now, "items": refs})
+    return refs
 
 
 def _project_from_text(text: str) -> str | None:
     low = (text or "").lower()
-    try:
-        for alias in load_config().get("synx", {}).get("projects") or []:
-            if str(alias).lower() in low:
-                return str(alias)
-    except Exception:
-        pass
-    for hint, alias in PROJECT_HINTS.items():
-        if hint in low:
+    for key, alias in _known_projects():
+        if key and key in low:
             return alias
     return None
 
