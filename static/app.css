@@ -121,7 +121,7 @@ table.data tbody tr.error { background: var(--error-bg); }
 table.data tbody tr.done { color: var(--ink-soft); }
 table.data .num { font-variant-numeric: tabular-nums; text-align: right; }
 table.data .center { text-align: center; }
-table.data .wrap { var(--accent-ink)-space: normal; }
+table.data .wrap { white-space: normal; }
 table.data .col-check { width: 32px; min-width: 32px; text-align: center; }
 table.data .row-num { width: 42px; color: var(--ink-soft); text-align: right; }
 .col-hidden { display: none !important; }
@@ -142,7 +142,7 @@ th .col-resize { position: absolute; }
 .progress { height: 5px; background: var(--line); border-radius: 49.5px; overflow: hidden; min-width: 70px; }
 .progress > i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent)); width: 0; }
 .mono { font-family: var(--mono); font-size: 11.5px; }
-.pre { var(--accent-ink)-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: 11.5px; }
+.pre { white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: 11.5px; }
 .link { color: var(--accent); text-decoration: none; }
 .link:hover { text-decoration: underline; }
 .pill { display: inline-flex; gap: 4.25px; align-items: center; }
