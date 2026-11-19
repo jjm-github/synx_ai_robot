@@ -315,10 +315,10 @@ textarea.input { resize: vertical; min-height: 220px; }
 
 /* cloned synx_engine theme controls */
 .theme-btn {
-    height: 30px; min-width: 30px; padding: 0 8px;
+    width: 26px; min-width: 26px; height: 26px; padding: 0;
     border: 1px solid var(--line2); border-radius: 4px;
     background: var(--panel); color: var(--text);
-    font-size: 16px; line-height: 1; cursor: pointer;
+    font-size: 14px; line-height: 1; cursor: pointer;
 }
 .theme-btn:hover { background: var(--panel2); }
 .theme-menu { display: block; }

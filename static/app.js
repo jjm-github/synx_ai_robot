@@ -1541,18 +1541,6 @@
   });
   setInterval(pipelineStatus, 3000);
 
-  // ---------- scan ----------
-  $("scan-btn").addEventListener("click", async function () {
-    var btn = this; btn.disabled = true; btn.textContent = "Сканирую...";
-    try {
-      var d = await api("/api/synx/scan", { method: "POST", body: JSON.stringify({}) });
-      toast("Synx: " + d.comments + " комментариев, новых " + d.new);
-      var meta = await api("/api/meta");
-      $("last-scan").textContent = "scan: " + fmtTime(meta.last_scan);
-    } catch (e) { toast("Scan: " + e.message, true); }
-    finally { btn.disabled = false; btn.textContent = "Сканировать synx"; }
-  });
-
   // ---------- context menu / modal ----------
   function openContextMenu(x, y, items) {
     var m = $("ctx-menu");
