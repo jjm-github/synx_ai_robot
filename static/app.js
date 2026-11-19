@@ -1663,7 +1663,22 @@
   var uiZoom = parseFloat(localStorage.getItem("uiZoom") || "1");
   if (!isFinite(uiZoom) || uiZoom < 0.7 || uiZoom > 1.6) uiZoom = 1;
   function applyUiZoom() {
-    document.documentElement.style.zoom = uiZoom;
+    // CSS zoom is not reliable in WebKitGTK, so scale the app container.
+    // The container is stretched by 1/scale and then scaled, so it still
+    // fills the window and fixed overlays keep covering the viewport.
+    var app = $("app");
+    if (!app) return;
+    if (Math.abs(uiZoom - 1) < 0.001) {
+      app.style.transform = "";
+      app.style.transformOrigin = "";
+      app.style.width = "";
+      app.style.height = "";
+    } else {
+      app.style.transformOrigin = "0 0";
+      app.style.transform = "scale(" + uiZoom + ")";
+      app.style.width = (100 / uiZoom) + "vw";
+      app.style.height = (100 / uiZoom) + "vh";
+    }
   }
   function setUiZoom(next) {
     next = Math.round(Math.max(0.7, Math.min(1.6, next)) * 100) / 100;
@@ -1671,6 +1686,7 @@
     uiZoom = next;
     try { localStorage.setItem("uiZoom", String(uiZoom)); } catch (e) {}
     applyUiZoom();
+    updateZoomUi();
     toast("Масштаб: " + Math.round(uiZoom * 100) + "%");
   }
   applyUiZoom();
@@ -1679,8 +1695,17 @@
     var t = e.target;
     if (t && t.closest && t.closest("#pdf-viewer:not(.hidden), #image-viewer:not(.hidden)")) return;
     e.preventDefault();
+    e.stopPropagation();
     setUiZoom(uiZoom + (e.deltaY < 0 ? 0.05 : -0.05));
-  }, { passive: false });
+  }, { passive: false, capture: true });
+  function updateZoomUi() {
+    var el = $("zoom-value");
+    if (el) el.textContent = Math.round(uiZoom * 100) + "%";
+  }
+  $("zoom-in").addEventListener("click", function () { setUiZoom(uiZoom + 0.05); });
+  $("zoom-out").addEventListener("click", function () { setUiZoom(uiZoom - 0.05); });
+  $("zoom-value").addEventListener("click", function () { setUiZoom(1); });
+  updateZoomUi();
   document.addEventListener("keydown", function (e) {
     if (!(e.ctrlKey || e.metaKey)) return;
     if (e.key === "+" || e.key === "=") { e.preventDefault(); setUiZoom(uiZoom + 0.05); }
