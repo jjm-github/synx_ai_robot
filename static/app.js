@@ -428,7 +428,11 @@
     var wrap = document.createElement("div"); wrap.className = "msg assistant"; wrap.id = "chat-thinking";
     wrap.innerHTML = '<div class="msg-avatar">AI</div><div class="msg-bubble">' +
       '<div class="thinking-row"><span class="thinking-dots"><i></i><i></i><i></i></span><span id="thinking-text">Анализирую запрос...</span></div>' +
-      '<div class="job-log" id="job-log"></div><div class="job-images" id="job-images"></div></div>';
+      '<div class="job-log" id="job-log"></div><div class="job-images" id="job-images"></div>' +
+      '<div class="thinking-footer"><button class="btn danger hidden" id="chat-stop" title="Прервать текущий ответ (Esc)">■ Стоп</button></div>' +
+      '</div>';
+    var stop = wrap.querySelector("#chat-stop");
+    if (stop) stop.addEventListener("click", stopChatJob);
     box.appendChild(wrap); box.scrollTop = box.scrollHeight;
     return wrap;
   }
@@ -436,7 +440,8 @@
   function setChatRunning(on) {
     $("chat-send").disabled = on;
     $("chat-send").textContent = on ? "Думаю..." : "Отправить";
-    $("chat-stop").classList.toggle("hidden", !on);
+    var stop = $("chat-stop");
+    if (stop) stop.classList.toggle("hidden", !on);
   }
   async function stopChatJob() {
     if (!activeChatJob) return;
@@ -496,7 +501,6 @@
       activeChatJob = null;
     }
   }
-  $("chat-stop").addEventListener("click", stopChatJob);
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape" && activeChatJob) { e.preventDefault(); stopChatJob(); }
   });
