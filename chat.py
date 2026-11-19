@@ -966,6 +966,11 @@ TEXT_DOC_TOOLS = [
             "fps": {"type": "integer", "default": 25},
             "location_map": {"type": "object", "description": "sequence -> location asset name"},
             "link_locations": {"type": "boolean", "default": True},
+            "create_tasks": {"type": "boolean", "default": True,
+                             "description": "Create one Conform task per shot with TZ"},
+            "task_name": {"type": "string", "default": "conform"},
+            "task_type": {"type": "string", "default": "Conform"},
+            "bot": {"type": "string", "default": "a.smirnov"},
         }, "required": ["project", "script_path"]},
     }},
     {"type": "function", "function": {
@@ -2549,6 +2554,10 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
                 fps=int(args.get("fps") or 25),
                 location_map=args.get("location_map") or {},
                 link_locations=bool(args.get("link_locations", True)),
+                create_tasks=bool(args.get("create_tasks", True)),
+                task_name=args.get("task_name") or "conform",
+                task_type=args.get("task_type") or "Conform",
+                bot_login=args.get("bot") or "a.smirnov",
                 progress=progress), [], None
         except Exception as exc:
             return {"error": str(exc)}, [], None
@@ -2944,8 +2953,10 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
             for code in sorted(frames):
                 lines.append(f"- {code}: {frames[code]} кадров")
             lines += ["", f"Всего: **{result.get('total_frames')}** кадров.",
-                      "Задачи и версии не создавались; у шотов display_name = имя, "
-                      "связаны локация + участники сцены."]
+                      f"Задач Conform создано: {result.get('tasks_created', 0)}, "
+                      f"назначено ботов: {result.get('tasks_assigned', 0)}.",
+                      "У шотов display_name = имя; связаны локация + участники сцены; "
+                      "версии не создавались."]
             if result.get("errors"):
                 lines += ["", "Ошибки: " + "; ".join(
                     f"{e.get('shot')}: {e.get('error')}" for e in result["errors"][:5])]

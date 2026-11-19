@@ -193,6 +193,10 @@ def create_structure(project: str, script_path: str | Path, *,
                      location_map: dict[str, str] | None = None,
                      link_locations: bool = True,
                      create_folders: bool = True,
+                     create_tasks: bool = True,
+                     task_name: str = "conform",
+                     task_type: str = "Conform",
+                     bot_login: str = "a.smirnov",
                      progress=None) -> dict[str, Any]:
     def stage(msg: str) -> None:
         if progress:
@@ -222,7 +226,7 @@ def create_structure(project: str, script_path: str | Path, *,
     stage("Создаю шоты по сценарию...")
     frames_by_seq: dict[str, int] = defaultdict(int)
     cut: dict[str, int] = defaultdict(int)
-    created = updated = 0
+    created = updated = tasks_created = tasks_assigned = 0
     errors: list[dict[str, str]] = []
     made: list[dict[str, Any]] = []
     for sh in shots:
@@ -269,6 +273,36 @@ def create_structure(project: str, script_path: str | Path, *,
                     parents=True, exist_ok=True)
             except Exception:
                 pass
+        if create_tasks:
+            try:
+                current_tasks = client.tasks(shot["id"])
+                exists = any(t.get("task_name") == task_name
+                             and t.get("task_type") == task_type
+                             for t in current_tasks)
+                if not exists:
+                    tz = (f"ТЗ: {task_type} — {sh['name']}\n\n"
+                          f"Секвенция: {seq}\n"
+                          f"Длительность: {sh['frames']} кадров "
+                          f"({round(int(sh['frames']) / fps, 1)} c, {fps} fps)\n\n"
+                          f"{info}\n\n"
+                          f"ЗАДАЧА: собрать {task_type.lower()} шота {sh['name']}: "
+                          f"сохранить длительность {sh['frames']} кадров, проверить стык "
+                          f"с соседними шотами секвенции, не менять тайминг и кадрирование.\n\n"
+                          f"СДАЧА: conform-файл в рабочей папке шота; длительность "
+                          f"{sh['frames']} кадров.")
+                    task = client.create_task(shot["id"], task_name, task_type,
+                                              comment=tz, bid=3.0, status="todo")
+                    tasks_created += 1
+                    try:
+                        users = {u.get("short_name"): u for u in client.assignment_users(task["id"])}
+                        user = users.get(bot_login)
+                        if user:
+                            client.assign(task["id"], [user["id"]])
+                            tasks_assigned += 1
+                    except Exception:
+                        pass
+            except Exception as exc:
+                errors.append({"shot": sh["name"], "error": "task: " + str(exc)[:160]})
         made.append({"name": sh["name"], "seq": seq, "frames": sh["frames"],
                      "cut_in": cut_in, "cut_out": cut_out})
 
@@ -291,7 +325,8 @@ def create_structure(project: str, script_path: str | Path, *,
     stage("Готово")
     return {"ok": not errors, "project": alias, "script": str(path),
             "sequences": len(seqs), "shots": len(shots), "created": created,
-            "updated": updated, "errors": errors,
+            "updated": updated, "tasks_created": tasks_created,
+            "tasks_assigned": tasks_assigned, "errors": errors,
             "frames_per_sequence": dict(frames_by_seq),
             "total_frames": sum(frames_by_seq.values()),
             "items": made}
