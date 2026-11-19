@@ -318,8 +318,14 @@ def create_structure(project: str, script_path: str | Path, *,
         if not se or se.get("entity_kind") != "sequence":
             continue
         total = frames_by_seq.get(code, 0)
-        info = (f"Секвенция {code} · {sq['heading']}\n{sq['timing']}\n"
-                f"Шотов: {sum(1 for m in made if m['seq'] == code)} · Кадров: {total}")
+        shot_names = [m["name"] for m in made if m["seq"] == code]
+        auto_info = (f"СЕКВЕНЦИЯ {code} · {sq['heading']}\n"
+                     f"ТАЙМИНГ: {sq['timing']}\n"
+                     f"ЛОКАЦИЯ: {sq['heading']}\n"
+                     f"ШОТЫ: {', '.join(shot_names)}\n"
+                     f"ВСЕГО: {len(shot_names)} шотов · {total} кадров")
+        old_info = (se.get("info") or "").strip()
+        info = old_info if len(old_info) > len(auto_info) else auto_info
         try:
             client.update_entity(se["id"], {"display_name": code, "info": info})
         except Exception:

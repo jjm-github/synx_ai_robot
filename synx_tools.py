@@ -547,6 +547,9 @@ def update_entity(project: str, name: str, info: str | None = None,
     if info is not None:
         payload["info"] = info
     if display_name is not None:
+        if e.get("entity_kind") == "sequence" and display_name != e.get("name"):
+            raise ValueError("sequence display_name must equal its name (s001, s002, ...); "
+                             "put the ТЗ into info instead")
         payload["display_name"] = display_name
     if asset_type is not None:
         resolved = None

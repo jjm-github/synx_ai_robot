@@ -151,6 +151,13 @@ PDF на стандартных страницах, проверит его и �
   `p002_0130`. `display_name` — человекочитаемое (латиница/английский), `info` —
   полное ТЗ на русском: что это, геометрия, свет, материалы, цвет, что в кадре,
   зачем. Пустое ТЗ недопустимо.
+- СЕКВЕНЦИИ — особый случай: `name` и `display_name` всегда ровно `s001`,
+  `s002`, … `s014`. НИКОГДА не переименовывай секвенцию и не подставляй в
+  `display_name` описание сцены. ТЗ секвенции пишется только в `info`:
+  `СЕКВЕНЦИЯ S01 · <локация/заголовок>`, `ТАЙМИНГ: ...`, `ЛОКАЦИЯ: ...`,
+  `СОДЕРЖАНИЕ: что происходит в эпизоде`, `ПЕРСОНАЖИ: ...`, `ГРАФИКА: ...`,
+  `ШОТЫ: ...`, `ЗАДАЧА: ...`. Для секвенций вызывай `synx_update_entity`
+  только с `info`; `display_name` не передавай.
 - Имя задачи — slug, совпадающий с папкой/сущностью (`loc_ocean_seiner`), а не
   тип (`art`) и не кириллица. Для каждой задачи в первом комментарии — ТЗ:
   задача, исходные данные, формат сдачи, стиль, что сдать, критерии приёмки.
@@ -656,7 +663,8 @@ SYNX_TOOLS = [
         "function": {
             "name": "synx_update_entity",
             "description": ("Update an entity: info (the ТЗ/description), display_name, "
-                            "asset_type. Use to fill a missing ТЗ instead of leaving it empty."),
+                            "asset_type. Use to fill a missing ТЗ. For entity_kind=sequence "
+                            "pass ONLY info: name/display_name of a sequence must stay sNNN."),
             "parameters": {"type": "object", "properties": {
                 "project": {"type": "string"},
                 "name": {"type": "string"},
