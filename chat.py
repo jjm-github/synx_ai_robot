@@ -3436,12 +3436,15 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
     try:
         max_steps = int((cfg.get("ai") or {}).get("max_tool_steps") or 100)
         for _step in range(max_steps):
-            emit({"type": "stage", "text": "Думаю..."})
+            step_no = _step + 1
+            emit({"type": "stage", "text": "Думаю...", "step": step_no})
             if _step:
                 _check_cancel(job or {})
             msg, u = ai.chat_message(history, tools=TOOLS)
             usage["input"] += u.get("input", 0)
             usage["output"] += u.get("output", 0)
+            emit({"type": "step_usage", "step": step_no,
+                  "input": int(u.get("input", 0)), "output": int(u.get("output", 0))})
             calls = msg.get("tool_calls") or []
             if not calls:
                 content = (msg.get("content") or "").strip()
@@ -3481,7 +3484,7 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
             # The tool loop is over: answer from what was already collected
             # instead of dropping the request with a loop-limit message.
             try:
-                emit({"type": "stage", "text": "Формулирую ответ..."})
+                emit({"type": "stage", "text": "Формулирую ответ...", "step": max_steps + 1})
                 history.append({"role": "system", "content": (
                     "Текущий шаг завершён. Сформулируй ответ пользователю по уже "
                     "полученным результатам. Не говори, что инструменты отключены: "
@@ -3490,6 +3493,8 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
                 msg, u = ai.chat_message(history)
                 usage["input"] += u.get("input", 0)
                 usage["output"] += u.get("output", 0)
+                emit({"type": "step_usage", "step": max_steps + 1,
+                      "input": int(u.get("input", 0)), "output": int(u.get("output", 0))})
                 content = (msg.get("content") or "").strip()
             except Exception:
                 pass

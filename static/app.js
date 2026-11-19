@@ -163,8 +163,17 @@
       var filesHtml = files.length ? '<div class="msg-files">' + files.map(chatFileHtml).join("") + "</div>" : "";
       var textHtml = isUser ? '<div class="msg-text">' + esc(m.content || "").replace(/\n/g, "<br>") + "</div>" : '<div class="msg-text markdown-body">' + mdHtml(m.content || "") + "</div>";
       var usage = m.usage && (m.usage.input || m.usage.output) ? '<div class="msg-meta">токены: ' + (m.usage.input || 0) + " / " + (m.usage.output || 0) + "</div>" : "";
-      var progress = (m.progress || []).filter(function (e) { return e.type === "stage"; }).map(function (e) { return esc(e.text || ""); }).join("<br>");
-      var progressHtml = progress ? '<details class="msg-progress"><summary>Этапы выполнения</summary><div>' + progress + '</div></details>' : "";
+      var progressEvents = m.progress || [];
+      var usageByStep = {};
+      progressEvents.forEach(function (e) { if (e.type === "step_usage") usageByStep[e.step] = e; });
+      var progressRows = progressEvents.filter(function (e) { return e.type === "stage"; }).map(function (e) {
+        var u = usageByStep[e.step];
+        var tokenText = u ? "вход " + Number(u.input || 0).toLocaleString("ru-RU") +
+          " · выход " + Number(u.output || 0).toLocaleString("ru-RU") : "";
+        return '<div class="job-log-line"><span class="job-log-text">• ' + esc(e.text || "") + '</span>' +
+          (tokenText ? '<span class="job-log-tokens">' + tokenText + '</span>' : '') + '</div>';
+      });
+      var progressHtml = progressRows.length ? '<details class="msg-progress"><summary>Этапы выполнения</summary><div>' + progressRows.join("") + '</div></details>' : "";
       var playlist = m.playlist_text ? '<div class="playlist-card"><div class="playlist-card-head"><b>Плейлист Synx</b><button class="btn" data-copy-playlist>Скопировать</button></div><details><summary>Показать текст плейлиста</summary><pre>' + esc(m.playlist_text) + '</pre></details></div>' : "";
       wrap.innerHTML = '<div class="msg-avatar">' + (isUser ? "Я" : "AI") + '</div><div class="msg-bubble">' + textHtml + imgHtml + filesHtml + progressHtml + playlist + usage + "</div>";
       box.appendChild(wrap);
@@ -451,6 +460,10 @@
   }
   async function pollChatJob(jobId) {
     var seen = 0;
+    var stepLines = {};
+    function fmtTokens(n) {
+      return Number(n || 0).toLocaleString("ru-RU");
+    }
     for (;;) {
       var d;
       try { d = await api("/api/chat/jobs/" + encodeURIComponent(jobId)); }
@@ -461,7 +474,35 @@
         var th = $("thinking-text"); if (th && evt.text) th.textContent = evt.text;
         if (evt.type === "stage") {
           var log = $("job-log");
-          if (log) { var line = document.createElement("div"); line.className = "job-log-line"; line.textContent = "• " + evt.text; log.appendChild(line); }
+          if (log) {
+            var line = document.createElement("div");
+            line.className = "job-log-line";
+            var txt = document.createElement("span");
+            txt.className = "job-log-text";
+            txt.textContent = "• " + evt.text;
+            var tok = document.createElement("span");
+            tok.className = "job-log-tokens";
+            line.appendChild(txt);
+            line.appendChild(tok);
+            log.appendChild(line);
+            if (evt.step) stepLines[evt.step] = tok;
+          }
+        }
+        if (evt.type === "step_usage") {
+          var tk = stepLines[evt.step];
+          if (!tk) {
+            var log2 = $("job-log");
+            if (log2) {
+              var l2 = document.createElement("div"); l2.className = "job-log-line";
+              var t2 = document.createElement("span"); t2.className = "job-log-text";
+              t2.textContent = "• Шаг " + evt.step;
+              tk = document.createElement("span"); tk.className = "job-log-tokens";
+              l2.appendChild(t2); l2.appendChild(tk); log2.appendChild(l2);
+              stepLines[evt.step] = tk;
+            }
+          }
+          if (tk) tk.textContent = "вход " + fmtTokens(evt.input) +
+            " · выход " + fmtTokens(evt.output);
         }
         if (evt.type === "image" && evt.image) {
           var jb = $("job-images");
