@@ -438,6 +438,95 @@
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape" && activeChatJob) { e.preventDefault(); stopChatJob(); }
   });
+  // ---------- local voice input (hold to talk) ----------
+  var voiceState = {enabled: false, recording: false, polling: null, before: "", after: ""};
+  function voiceUi() {
+    var on = voiceState.enabled;
+    $("voice-enabled").checked = on;
+    $("voice-btn").classList.toggle("hidden", !on);
+  }
+  async function loadVoiceStatus() {
+    try {
+      var d = await api("/api/voice/status");
+      voiceState.enabled = !!d.enabled;
+      voiceUi();
+      if (d.status === "error" && d.error) console.warn("voice:", d.error);
+    } catch (e) { /* voice is optional */ }
+  }
+  $("voice-enabled").addEventListener("change", async function () {
+    try {
+      var d = await api("/api/voice/toggle", {method: "POST",
+        body: JSON.stringify({enabled: this.checked})});
+      voiceState.enabled = !!d.enabled;
+      voiceUi();
+      toast(d.enabled ? "Голосовой ввод включён" : "Голосовой ввод выключен, модели выгружены");
+    } catch (e) { toast("Голос: " + e.message, true); this.checked = !this.checked; }
+  });
+  function voiceRestoreButton() {
+    $("voice-btn").classList.remove("recording");
+    $("voice-btn").textContent = "🎤 Держать";
+    $("chat-input").readOnly = false;
+  }
+  async function voiceStart() {
+    if (!voiceState.enabled || voiceState.recording) return;
+    var ta = $("chat-input");
+    var start = ta.selectionStart != null ? ta.selectionStart : ta.value.length;
+    var end = ta.selectionEnd != null ? ta.selectionEnd : ta.value.length;
+    voiceState.before = ta.value.slice(0, start);
+    voiceState.after = ta.value.slice(end);
+    voiceState.recording = true;
+    ta.readOnly = true;
+    $("voice-btn").classList.add("recording");
+    $("voice-btn").textContent = "● Запись";
+    try {
+      var d = await api("/api/voice/start", {method: "POST"});
+      if (d.error) throw new Error(d.error);
+      voiceState.polling = setInterval(async function () {
+        try {
+          var p = await api("/api/voice/partial");
+          if (!voiceState.recording) return;
+          if (p.partial) {
+            $("chat-input").value = voiceState.before + p.partial + voiceState.after;
+          }
+        } catch (e) { /* keep partial */ }
+      }, 250);
+    } catch (e) {
+      voiceState.recording = false;
+      voiceRestoreButton();
+      toast("Голос: " + e.message, true);
+    }
+  }
+  async function voiceStop() {
+    if (!voiceState.recording) return;
+    voiceState.recording = false;
+    if (voiceState.polling) { clearInterval(voiceState.polling); voiceState.polling = null; }
+    var ta = $("chat-input");
+    try {
+      var d = await api("/api/voice/stop", {method: "POST"});
+      var text = (d.final || d.partial || "").trim();
+      ta.value = voiceState.before + text + voiceState.after;
+      var pos = (voiceState.before + text).length;
+      ta.focus();
+      ta.setSelectionRange(pos, pos);
+      if (d.error) toast("Голос: " + d.error, true);
+      else if (text) toast("Голос распознан");
+    } catch (e) {
+      toast("Голос: " + e.message, true);
+    } finally {
+      voiceRestoreButton();
+    }
+  }
+  $("voice-btn").addEventListener("pointerdown", function (e) {
+    e.preventDefault();
+    voiceStart();
+  });
+  window.addEventListener("pointerup", function () { voiceStop(); });
+  window.addEventListener("pointercancel", function () { voiceStop(); });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && voiceState.recording) { e.preventDefault(); voiceStop(); }
+  });
+  loadVoiceStatus();
+
   $("chat-send").addEventListener("click", sendChat);
   $("chat-input").addEventListener("keydown", function (e) {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }

@@ -159,6 +159,8 @@
           <textarea class="input chat-input" id="chat-input" rows="3" placeholder="Напиши вопрос или попроси: «нарисуй ... по этим референсам»"></textarea>
           <div class="chat-actions">
             <label class="btn attach-btn">+ Референс<input type="file" id="chat-files" accept="image/*" multiple hidden></label>
+            <button class="btn voice-btn hidden" id="voice-btn" title="Удерживайте кнопку и говорите">🎤 Держать</button>
+            <label class="check inline-check voice-toggle" title="Локальный голосовой ввод (T-one + GigaAM)"><input type="checkbox" id="voice-enabled"> голос</label>
             <button class="btn primary" id="chat-send">Отправить</button>
             <button class="btn danger hidden" id="chat-stop" title="Прервать текущий ответ (Esc)">■ Стоп</button>
             <span class="muted" id="chat-hint">Enter — отправить, Shift+Enter — новая строка</span>

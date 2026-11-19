@@ -7,3 +7,4 @@ pywebview>=5.0
 python-multipart>=0.0.9
 duckduckgo-mcp-server>=0.7
 reportlab>=5.0
+sherpa-onnx==2.0.1

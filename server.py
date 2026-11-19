@@ -24,6 +24,7 @@ from classify import classify_publication
 import fs_tools
 import mcp_manager
 import pdf_cache
+import voice
 from links import task_version_url
 from plan_md import save_plan_markdown
 from chat import (IMAGES as CHAT_IMAGES, UPLOADS as CHAT_UPLOADS,
@@ -76,6 +77,10 @@ class ChatSendBody(BaseModel):
     session_id: str = "default"
     text: str = ""
     images: list[dict[str, Any]] = []
+
+
+class VoiceToggleBody(BaseModel):
+    enabled: bool = True
 
 
 class ChatSessionBody(BaseModel):
@@ -675,6 +680,57 @@ def chat_context_set(body: ChatContextBody):
 def chat_context_clear(session_id: str = "default"):
     db.set_chat_context(session_id, "")
     return {"ok": True}
+
+
+@app.get("/api/voice/status")
+def voice_status():
+    return voice.status()
+
+
+@app.post("/api/voice/start")
+def voice_start():
+    try:
+        return voice.start()
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.get("/api/voice/partial")
+def voice_partial():
+    return voice.partial()
+
+
+@app.post("/api/voice/stop")
+def voice_stop():
+    try:
+        return voice.stop()
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.post("/api/voice/toggle")
+def voice_toggle(body: VoiceToggleBody):
+    return voice.toggle(body.enabled)
+
+
+@app.post("/api/voice/transcribe")
+async def voice_transcribe(file: UploadFile = File(...)):
+    import tempfile
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(400, "empty file")
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fh:
+        fh.write(raw)
+        path = fh.name
+    try:
+        return voice.engine.transcribe_file(path)
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+    finally:
+        try:
+            Path(path).unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 @app.post("/api/chat/send")

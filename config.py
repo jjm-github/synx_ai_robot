@@ -73,6 +73,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "work_root": str(ROOT / "data" / "work"),
         "max_tasks": 0,
     },
+    "voice": {
+        "enabled": True,
+        "llm_correct": True,
+        "audio_device": "",
+        "sample_rate": 16000,
+        "models_dir": "data/voice/models",
+    },
     "ui": {"window_width": 1500, "window_height": 960},
 }
 
