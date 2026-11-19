@@ -20,6 +20,7 @@ import doc_flow
 import fs_tools
 import mcp_manager
 import mcp_runtime
+import obsidian_export
 import passport_batch
 import pdf_cache
 import pipeline_queue
@@ -168,6 +169,9 @@ PDF на стандартных страницах, проверит его и �
   сущности и где смотреть (раздел «Задачи», статус конвейера). Без вопросов.
 - «Просчитай все локации/шоты через конвейер» = `queue_generation_tasks`
   с `entities=["all_locations"]` и запуском, не спрашивая подтверждения.
+- Карта ассетов в Obsidian: `export_obsidian_map` (project, section). Каждый
+  ассет — отдельная статья, связи — wikilinks, плюс map-нота и `.canvas`.
+  Секцию бери из запроса (например TEST_PROJ), не спрашивай.
 - «По 9 видов + 1 превью на локацию» / «паспорт 10 страниц» = запусти
   `start_passport_batch` (project, locations=all, views=9). Он в фоне генерирует
   9 ракурсов, собирает контактный лист первой страницей и публикует 10-страничный
@@ -931,6 +935,17 @@ TEXT_DOC_TOOLS = [
             "bot": {"type": "string"},
             "start": {"type": "boolean", "default": True},
         }, "required": ["project", "entities"]},
+    }},
+    {"type": "function", "function": {
+        "name": "export_obsidian_map",
+        "description": ("Export a synx project to Obsidian: one note per asset, a map note "
+                        "with wikilinks and a JSON Canvas relationship map, under the given "
+                        "section folder (e.g. TEST_PROJ). No questions."),
+        "parameters": {"type": "object", "properties": {
+            "project": {"type": "string", "default": "test_proekt_vfx"},
+            "section": {"type": "string", "default": "TEST_PROJ"},
+            "vault": {"type": "string", "description": "Vault path (optional)"},
+        }},
     }},
     {"type": "function", "function": {
         "name": "start_passport_batch",
@@ -2454,6 +2469,14 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
                 bot_login=args.get("bot"),
                 start=bool(args.get("start", True)))
             return result, [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
+    if name == "export_obsidian_map":
+        try:
+            return obsidian_export.export_project(
+                args.get("project") or "test_proekt_vfx",
+                args.get("section") or "TEST_PROJ",
+                args.get("vault")), [], None
         except Exception as exc:
             return {"error": str(exc)}, [], None
     if name == "start_passport_batch":

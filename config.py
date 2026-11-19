@@ -65,7 +65,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         },
         "default_layout": "assets/{shot}",
         "plans_dir": str(DATA_DIR / "plans"),
-        "obsidian_vault": "",
+        "obsidian_vault": "/home/jaroslav/obsidian_first_storage",
     },
     "pipeline": {
         "auto_publish": False,
