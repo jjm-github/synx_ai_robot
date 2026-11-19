@@ -27,6 +27,7 @@ import pipeline_queue
 import publish_flow
 import synx_tools
 import script_tools
+import shot_script
 import system_info
 import text_pdf
 from ai import AIClient, AIError, _data_url
@@ -172,6 +173,11 @@ PDF на стандартных страницах, проверит его и �
 - Карта ассетов в Obsidian: `export_obsidian_map` (project, section). Каждый
   ассет — отдельная статья, связи — wikilinks, плюс map-нота и `.canvas`.
   Секцию бери из запроса (например TEST_PROJ), не спрашивай.
+- Структура шотов из сценария — `create_shots_from_script` (или сообщение
+  «создай структуру шотов по сценарию»). Имена — канонические ID из строк
+  `s001_0010 · 200 кадров`; display_name — тезис шота, не код `S01-04`;
+  `cut_out = cut_in + кадры - 1`; задачи и версии НЕ создаются; шоты линкуются
+  к локациям. Не придумывай имена и не создавай лишние шоты.
 - «По 9 видов + 1 превью на локацию» / «паспорт 10 страниц» = запусти
   `start_passport_batch` (project, locations=all, views=9). Он в фоне генерирует
   9 ракурсов, собирает контактный лист первой страницей и публикует 10-страничный
@@ -948,6 +954,19 @@ TEXT_DOC_TOOLS = [
         }},
     }},
     {"type": "function", "function": {
+        "name": "create_shots_from_script",
+        "description": ("Create a synx shot structure from a shot-by-shot script: canonical IDs "
+                        "(s001_0010), thesis as display name, exact frame durations, no tasks or "
+                        "versions, shots linked to their location assets."),
+        "parameters": {"type": "object", "properties": {
+            "project": {"type": "string"},
+            "script_path": {"type": "string"},
+            "fps": {"type": "integer", "default": 25},
+            "location_map": {"type": "object", "description": "sequence -> location asset name"},
+            "link_locations": {"type": "boolean", "default": True},
+        }, "required": ["project", "script_path"]},
+    }},
+    {"type": "function", "function": {
         "name": "start_passport_batch",
         "description": ("Queue visible pipeline tasks for location passports: 9 views + 1 preview "
                         "page = 10-page A3 PDF per location, published as a new version. "
@@ -1449,6 +1468,48 @@ def _entity_create_request(text: str) -> dict[str, Any] | None:
             "entity_kind": kind,
             "asset_type": m_type.group(1).rstrip(".,;") if m_type else None,
             "info": m_desc.group(1).strip() if m_desc else ""}
+
+
+def _latest_shot_script(project: str) -> Path | None:
+    from config import ROOT
+    base = Path("/mnt/projects") / project / "assets" / "main_script" / "art" / "work"
+    files: list[Path] = []
+    for pat in ("*/*pilot_shot_script*/*.md", "*/*shot_script*/*.md"):
+        files += [p for p in base.glob(pat)
+                  if p.is_file() and "shot_script" in p.name.lower()
+                  and not p.name.lower().startswith("readme")]
+    if not files:
+        files = [p for p in (ROOT / "data" / "plans").glob("*shot_script*.md") if p.is_file()]
+    if not files:
+        return None
+    def ver(p: Path):
+        m = re.search(r"v(\d{3})", str(p))
+        return (int(m.group(1)) if m else 0, p.stat().st_mtime)
+    return max(files, key=ver)
+
+
+def _shot_structure_request(text: str, session_id: str = "default") -> dict[str, Any] | None:
+    low = (text or "").lower()
+    if not re.search(r"(созда|пересозда|сделай|собери|построй)", low):
+        return None
+    if "шот" not in low:
+        return None
+    if not ("сценар" in low or "структур" in low):
+        return None
+    if "задач" in low and "верси" not in low:
+        # "создай задачи по шотам" is not this branch
+        if "структур" not in low:
+            return None
+    project = _project_from_text(text)
+    if not project:
+        focus = db.get_chat_focus(session_id) or {}
+        project = focus.get("project") or "test_proekt_vfx"
+    m = re.search(r"([\w./~-]+\.md)", text or "")
+    path = str(Path(m.group(1)).expanduser()) if m else None
+    if not path:
+        latest = _latest_shot_script(project)
+        path = str(latest) if latest else None
+    return {"project": project, "script_path": path}
 
 
 def _passport_batch_request(text: str, session_id: str = "default") -> dict[str, Any] | None:
@@ -2479,6 +2540,16 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
                 args.get("vault")), [], None
         except Exception as exc:
             return {"error": str(exc)}, [], None
+    if name == "create_shots_from_script":
+        try:
+            return shot_script.create_structure(
+                args.get("project") or "", args.get("script_path") or "",
+                fps=int(args.get("fps") or 25),
+                location_map=args.get("location_map") or {},
+                link_locations=bool(args.get("link_locations", True)),
+                progress=progress), [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
     if name == "start_passport_batch":
         try:
             running = passport_batch.is_running()
@@ -2846,6 +2917,38 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
                            f"- Ссылка: {result.get('url')}")
         except Exception as exc:
             content = f"Не удалось создать сущность: {exc}"
+        emit({"type": "stage", "text": "Готово"})
+        db.add_chat_message(session_id, "assistant", content, generated=[],
+                            usage=usage, playlist_text=None, progress=stages)
+        return {"messages": db.list_chat_messages(session_id), "usage": usage,
+                "generated": [], "playlist_text": None, "stages": stages}
+
+    # Shot structure from a shot-by-shot script: deterministic, no tasks/versions.
+    shot_req = _shot_structure_request(text or "", session_id)
+    if shot_req:
+        content = ""
+        try:
+            if not shot_req.get("script_path"):
+                raise ValueError("не нашёл файл сценария с шотами")
+            emit({"type": "stage", "text": "Создаю шоты по сценарию..."})
+            result = shot_script.create_structure(
+                shot_req["project"], shot_req["script_path"],
+                location_map={}, link_locations=True, progress=emit)
+            frames = result.get("frames_per_sequence") or {}
+            lines = [f"Готово: **{result.get('sequences')}** секвенций, "
+                     f"**{result.get('shots')}** шотов.",
+                     f"Создано: {result.get('created')}, обновлено: {result.get('updated')}.",
+                     "", "Кадры по секвенциям:"]
+            for code in sorted(frames):
+                lines.append(f"- {code}: {frames[code]} кадров")
+            lines += ["", f"Всего: **{result.get('total_frames')}** кадров.",
+                      "Задачи и версии не создавались; шоты связаны с локациями."]
+            if result.get("errors"):
+                lines += ["", "Ошибки: " + "; ".join(
+                    f"{e.get('shot')}: {e.get('error')}" for e in result["errors"][:5])]
+            content = "\n".join(lines)
+        except Exception as exc:
+            content = f"Не удалось создать структуру шотов: {exc}"
         emit({"type": "stage", "text": "Готово"})
         db.add_chat_message(session_id, "assistant", content, generated=[],
                             usage=usage, playlist_text=None, progress=stages)
