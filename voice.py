@@ -47,6 +47,7 @@ class VoiceEngine:
         self._started_at = 0.0
         self._final_cv = threading.Condition(self._lock)
         self._last_result: dict[str, Any] | None = None
+        self._warming = False
 
     # --- config ---------------------------------------------------------
     def cfg(self) -> dict[str, Any]:
@@ -59,7 +60,9 @@ class VoiceEngine:
         cfg = load_config()
         cfg.setdefault("voice", {})["enabled"] = bool(value)
         save_config(cfg)
-        if not value:
+        if value:
+            self.warmup()
+        else:
             self.unload()
         return self.status()
 
@@ -102,6 +105,40 @@ class VoiceEngine:
             if self._status not in ("recording", "finalizing"):
                 self._status = "idle"
 
+    # --- warm-up --------------------------------------------------------
+    def warmup(self) -> None:
+        """Preload models and run a dummy inference in the background."""
+        if not self.enabled():
+            return
+        if self._online is not None and self._offline is not None:
+            return
+        with self._lock:
+            if self._warming or self._running:
+                return
+            self._warming = True
+        threading.Thread(target=self._warm_worker, daemon=True, name="voice-warmup").start()
+
+    def _warm_worker(self) -> None:
+        try:
+            self._load()
+            dummy = np.zeros(8000, dtype=np.float32)
+            if self._online is not None:
+                st = self._online.create_stream()
+                st.accept_waveform(8000, dummy)
+                while self._online.is_ready(st):
+                    self._online.decode_stream(st)
+            if self._offline is not None:
+                st = self._offline.create_stream()
+                st.accept_waveform(16000, np.zeros(16000, dtype=np.float32))
+                self._offline.decode_stream(st)
+        except Exception as exc:
+            with self._lock:
+                self._error = str(exc)[:300]
+                self._status = "error"
+        finally:
+            with self._lock:
+                self._warming = False
+
     # --- capture --------------------------------------------------------
     def start(self) -> dict[str, Any]:
         if not self.enabled():
@@ -109,10 +146,9 @@ class VoiceEngine:
         with self._lock:
             if self._running:
                 return self.status()
-            self._load()
             self._partial = ""
             self._samples = np.zeros(0, dtype=np.float32)
-            self._stream = self._online.create_stream()
+            self._stream = None
             device = str(self.cfg().get("audio_device") or "").strip()
             cmd = ["arecord", "-q", "-f", "S16_LE", "-r", "16000", "-c", "1", "-t", "raw"]
             if device:
@@ -126,6 +162,7 @@ class VoiceEngine:
             self._error = None
             self._thread = threading.Thread(target=self._reader, daemon=True, name="voice-reader")
             self._thread.start()
+        self.warmup()
         time.sleep(0.15)
         if self._proc is not None and self._proc.poll() is not None:
             self._running = False
@@ -150,14 +187,31 @@ class VoiceEngine:
                 continue
             with self._lock:
                 self._samples = np.concatenate([self._samples, x])[-60 * 16000:]
-                stream = self._stream
                 online = self._online
-            if stream is None or online is None:
-                return
-            # 16k -> 8k with a cheap 2-tap anti-alias (pair average)
-            n = len(x) - (len(x) % 2)
-            x8 = (x[0:n:2] + x[1:n:2]) * 0.5
+                stream = self._stream
+                need_init = online is not None and stream is None
+                buffered = self._samples.copy() if need_init else None
+            if online is None:
+                # models are still warming up: keep the audio buffered
+                continue
             try:
+                if need_init:
+                    stream = online.create_stream()
+                    with self._lock:
+                        self._stream = stream
+                    data = buffered if buffered is not None else x
+                    n = len(data) - (len(data) % 2)
+                    data8 = (data[0:n:2] + data[1:n:2]) * 0.5
+                    stream.accept_waveform(8000, data8)
+                    while online.is_ready(stream):
+                        online.decode_stream(stream)
+                    with self._lock:
+                        if self._running:
+                            self._partial = (online.get_result(stream) or "").strip()
+                    continue
+                # 16k -> 8k with a cheap 2-tap anti-alias (pair average)
+                n = len(x) - (len(x) % 2)
+                x8 = (x[0:n:2] + x[1:n:2]) * 0.5
                 stream.accept_waveform(8000, x8)
                 while online.is_ready(stream):
                     online.decode_stream(stream)
@@ -195,6 +249,9 @@ class VoiceEngine:
                     pass
         if self._thread is not None:
             self._thread.join(timeout=2)
+        deadline = time.time() + 12
+        while self._offline is None and time.time() < deadline:
+            time.sleep(0.1)
         final = partial
         if len(samples) >= 3200 and self._offline is not None:
             try:
@@ -270,10 +327,14 @@ class VoiceEngine:
             return {"enabled": self.enabled(), "status": self._status,
                     "partial": self._partial, "seconds": secs,
                     "models_loaded": self._online is not None and self._offline is not None,
-                    "error": self._error}
+                    "warming": self._warming, "error": self._error}
 
 
 engine = VoiceEngine()
+
+
+def warmup() -> None:
+    engine.warmup()
 
 
 def status() -> dict[str, Any]:

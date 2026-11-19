@@ -682,6 +682,14 @@ def chat_context_clear(session_id: str = "default"):
     return {"ok": True}
 
 
+@app.on_event("startup")
+def _voice_startup_warmup():
+    try:
+        voice.warmup()
+    except Exception:
+        pass
+
+
 @app.get("/api/voice/status")
 def voice_status():
     return voice.status()
