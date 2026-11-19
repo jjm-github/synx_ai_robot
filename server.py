@@ -34,6 +34,16 @@ from pipeline import manager
 from synx import SynxClient, SynxError
 
 app = FastAPI(title="IIRobot", version="0.1.0")
+
+
+@app.middleware("http")
+async def _no_cache_static(request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    if path == "/" or path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+    return response
 db.init()
 app.mount("/static", StaticFiles(directory=str(ROOT / "static")), name="static")
 
@@ -81,6 +91,10 @@ class ChatSendBody(BaseModel):
 
 class VoiceToggleBody(BaseModel):
     enabled: bool = True
+
+
+class UiZoomBody(BaseModel):
+    zoom: float = 1.0
 
 
 class ChatSessionBody(BaseModel):
@@ -283,6 +297,22 @@ def _event_monitor_loop() -> None:
 
 _scanner_thread: threading.Thread | None = None
 _event_thread: threading.Thread | None = None
+
+
+@app.get("/api/ui/zoom")
+def ui_zoom_get():
+    try:
+        data = json.loads((DATA_DIR / "ui_zoom.json").read_text(encoding="utf-8"))
+        return {"zoom": float(data.get("zoom", 1.0))}
+    except Exception:
+        return {"zoom": 1.0}
+
+
+@app.post("/api/ui/zoom")
+def ui_zoom_set(body: UiZoomBody):
+    zoom = max(0.7, min(1.6, float(body.zoom)))
+    (DATA_DIR / "ui_zoom.json").write_text(json.dumps({"zoom": zoom}), encoding="utf-8")
+    return {"zoom": zoom}
 
 
 @app.on_event("startup")

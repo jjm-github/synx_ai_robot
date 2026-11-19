@@ -1660,7 +1660,8 @@
   $("modal").addEventListener("click", function (e) { if (e.target === $("modal")) closeModal(); });
 
   // ---------- Ctrl + wheel: interface/font zoom ----------
-  var uiZoom = parseFloat(localStorage.getItem("uiZoom") || "1");
+  var uiZoom = 1;
+  try { uiZoom = parseFloat(localStorage.getItem("uiZoom") || "1"); } catch (e) { uiZoom = 1; }
   if (!isFinite(uiZoom) || uiZoom < 0.7 || uiZoom > 1.6) uiZoom = 1;
   function applyUiZoom() {
     // CSS zoom is not reliable in WebKitGTK, so scale the app container.
@@ -1685,8 +1686,19 @@
     if (next === uiZoom) return;
     uiZoom = next;
     try { localStorage.setItem("uiZoom", String(uiZoom)); } catch (e) {}
+    try {
+      fetch("/api/ui/zoom", {method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({zoom: uiZoom})}).catch(function () {});
+    } catch (e) {}
     applyUiZoom();
     updateZoomUi();
+  try {
+    fetch("/api/ui/zoom").then(function (r) { return r.json(); }).then(function (d) {
+      var z = parseFloat(d && d.zoom);
+      if (!isFinite(z) || z < 0.7 || z > 1.6 || Math.abs(z - uiZoom) < 0.001) return;
+      uiZoom = z; applyUiZoom(); updateZoomUi();
+    }).catch(function () {});
+  } catch (e) {}
     toast("Масштаб: " + Math.round(uiZoom * 100) + "%");
   }
   applyUiZoom();
