@@ -21,14 +21,11 @@
       <button class="nav-btn active" data-view="publications">Публикации</button>
       <button class="nav-btn" data-view="tasks">Задачи</button>
       <button class="nav-btn" data-view="chat">Чат</button>
-      <button class="nav-btn" data-view="settings">Настройки</button>
     </nav>
-    <div class="side-status">
-      <div class="status-line"><span id="synx-dot" class="dot"></span><span id="synx-status">synx: не проверен</span></div>
-      <div class="status-line"><span id="pipeline-dot" class="dot"></span><span id="pipeline-status">конвейер: остановлен</span></div>
-      <div class="side-meta" id="last-scan">—</div>
+    <div class="side-bottom">
+      <button class="nav-btn" data-view="settings">Настройки</button>
+      <button class="side-action" id="mcp-btn" title="MCP и навыки"><span class="side-action-icon">⚙</span> Skills</button>
     </div>
-    <button class="side-action" id="mcp-btn" title="MCP и навыки"><span class="side-action-icon">⚙</span> Skills</button>
   </aside>
 
   <main class="main">
@@ -294,6 +291,12 @@
     <div id="ctx-menu" class="ctx-menu"></div>
     <div id="modal" class="modal hidden"><div class="modal-card"><div class="modal-head"><h2 id="modal-title"></h2><button class="btn ghost" id="modal-close">×</button></div><div id="modal-body" class="modal-body"></div><div class="modal-foot" id="modal-foot"></div></div></div>
   </main>
+
+  <footer class="statusbar">
+    <div class="status-line"><span id="synx-dot" class="dot"></span><span id="synx-status">synx: не проверен</span></div>
+    <div class="status-line"><span id="pipeline-dot" class="dot"></span><span id="pipeline-status">конвейер: остановлен</span></div>
+    <div class="side-meta" id="last-scan">—</div>
+  </footer>
 </div>
 <script src="/static/marked.min.js"></script>
 <script src="/static/purify.min.js"></script>
