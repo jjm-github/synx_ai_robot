@@ -1659,6 +1659,35 @@
   $("modal-close").addEventListener("click", closeModal);
   $("modal").addEventListener("click", function (e) { if (e.target === $("modal")) closeModal(); });
 
+  // ---------- Ctrl + wheel: interface/font zoom ----------
+  var uiZoom = parseFloat(localStorage.getItem("uiZoom") || "1");
+  if (!isFinite(uiZoom) || uiZoom < 0.7 || uiZoom > 1.6) uiZoom = 1;
+  function applyUiZoom() {
+    document.documentElement.style.zoom = uiZoom;
+  }
+  function setUiZoom(next) {
+    next = Math.round(Math.max(0.7, Math.min(1.6, next)) * 100) / 100;
+    if (next === uiZoom) return;
+    uiZoom = next;
+    try { localStorage.setItem("uiZoom", String(uiZoom)); } catch (e) {}
+    applyUiZoom();
+    toast("Масштаб: " + Math.round(uiZoom * 100) + "%");
+  }
+  applyUiZoom();
+  window.addEventListener("wheel", function (e) {
+    if (!e.ctrlKey && !e.metaKey) return;
+    var t = e.target;
+    if (t && t.closest && t.closest("#pdf-viewer:not(.hidden), #image-viewer:not(.hidden)")) return;
+    e.preventDefault();
+    setUiZoom(uiZoom + (e.deltaY < 0 ? 0.05 : -0.05));
+  }, { passive: false });
+  document.addEventListener("keydown", function (e) {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (e.key === "+" || e.key === "=") { e.preventDefault(); setUiZoom(uiZoom + 0.05); }
+    else if (e.key === "-" || e.key === "_") { e.preventDefault(); setUiZoom(uiZoom - 0.05); }
+    else if (e.key === "0") { e.preventDefault(); setUiZoom(1); }
+  });
+
   // ---------- init ----------
   async function init() {
     await loadSettings();
