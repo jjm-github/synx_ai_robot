@@ -22,9 +22,9 @@ from typing import Any
 import numpy as np
 import requests
 
-from config import ROOT, load_config, save_config
+from config import DATA_DIR, load_config, save_config
 
-MODELS = ROOT / "data" / "voice" / "models"
+MODELS = DATA_DIR / "voice" / "models"
 T_ONE = MODELS / "t_one"
 GIGAAM = MODELS / "gigaam_v3"
 

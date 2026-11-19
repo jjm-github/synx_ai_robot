@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -10,10 +11,10 @@ from typing import Any
 
 import requests
 
-from config import ROOT
+from config import DATA_DIR, ROOT
 
-PATH = ROOT / "mcp_servers.json"
-INSTALL_DIR = ROOT / "data" / "mcp"
+PATH = Path(os.environ.get("IIROBOT_MCP_SERVERS") or (ROOT / "mcp_servers.json")).expanduser()
+INSTALL_DIR = DATA_DIR / "mcp"
 requests.packages.urllib3.disable_warnings()
 
 

@@ -18,9 +18,10 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
-ROOT = Path(__file__).resolve().parent
-STATUS_PATH = ROOT / "data" / "passport_batch.json"
-LOG_PATH = ROOT / "data" / "logs" / "passport_batch.log"
+from config import DATA_DIR, ROOT
+
+STATUS_PATH = DATA_DIR / "passport_batch.json"
+LOG_PATH = DATA_DIR / "logs" / "passport_batch.log"
 
 VIEWS = [
     ("01_establishing", "wide establishing shot, full location layout, golden hour"),
@@ -151,7 +152,7 @@ def run(project: str, locations: list[str], views: int = 9,
                 raise RuntimeError("no image returned")
             paths.append(Path(gen[0]["path"]))
         preview = contact_sheet(
-            paths, ROOT / "data" / "chat" / "pdf" / f"{name}_preview.png",
+            paths, DATA_DIR / "chat" / "pdf" / f"{name}_preview.png",
             f"{disp} — {len(paths)} views")
         from paths import task_work_dir
         versions = client.versions(e["id"])
@@ -221,7 +222,7 @@ def start(project: str, locations: list[str] | None, views: int = 9,
     locs = locations or ["all"]
     args += ["--locations", ",".join(locs)]
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    log = (ROOT / "data" / "logs" / "passport_batch.out").open("ab")
+    log = (DATA_DIR / "logs" / "passport_batch.out").open("ab")
     proc = subprocess.Popen(args, cwd=str(ROOT), stdin=subprocess.DEVNULL,
                             stdout=log, stderr=subprocess.STDOUT,
                             start_new_session=True)

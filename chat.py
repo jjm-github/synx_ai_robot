@@ -31,12 +31,12 @@ import shot_script
 import system_info
 import text_pdf
 from ai import AIClient, AIError, _data_url
-from config import ROOT, load_config
+from config import DATA_DIR, ROOT, load_config
 from workflows import flux3_i2v, flux3_t2i
 
 requests.packages.urllib3.disable_warnings()
 
-CHAT_DIR = ROOT / "data" / "chat"
+CHAT_DIR = DATA_DIR / "chat"
 UPLOADS = CHAT_DIR / "uploads"
 IMAGES = CHAT_DIR / "images"
 for _p in (UPLOADS, IMAGES):
@@ -1490,7 +1490,7 @@ def _latest_shot_script(project: str) -> Path | None:
                   if p.is_file() and "shot_script" in p.name.lower()
                   and not p.name.lower().startswith("readme")]
     if not files:
-        files = [p for p in (ROOT / "data" / "plans").glob("*shot_script*.md") if p.is_file()]
+        files = [p for p in (DATA_DIR / "plans").glob("*shot_script*.md") if p.is_file()]
     if not files:
         return None
     def ver(p: Path):
@@ -2446,7 +2446,7 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
         imgs = publish_flow._valid_images(imgs)
         if not imgs:
             return {"error": "no images for PDF"}, [], None
-        out_dir = ROOT / "data" / "chat" / "pdf"
+        out_dir = DATA_DIR / "chat" / "pdf"
         out_dir.mkdir(parents=True, exist_ok=True)
         name = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(args.get("pdf_name") or "frames")).strip("_") or "frames"
         pdf = publish_flow.make_pdf([i["path"] for i in imgs], out_dir / (name + ".pdf"),

@@ -6,7 +6,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
-DB_PATH = Path(__file__).resolve().parent / "data" / "robot.sqlite3"
+from config import DATA_DIR
+
+DB_PATH = DATA_DIR / "robot.sqlite3"
 
 
 def now() -> str:

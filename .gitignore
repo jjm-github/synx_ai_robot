@@ -5,3 +5,7 @@ config.json
 bots.json
 *.pyc
 mcp_servers.json
+build/
+dist/
+*.deb
+*.part

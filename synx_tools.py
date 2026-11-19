@@ -10,7 +10,7 @@ from typing import Any
 from PIL import Image
 
 import db
-from config import ROOT, load_config
+from config import DATA_DIR, ROOT, load_config
 from synx import SynxClient
 
 
@@ -187,7 +187,7 @@ def prepare_reference(project: str, shot: str, version: str | None = None,
     image_exts = {".png", ".jpg", ".jpeg", ".webp", ".avif", ".bmp", ".tif", ".tiff"}
     video_exts = {".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v"}
     is_video = (media.get("kind") == "video") or (ext in video_exts)
-    refs_dir = ROOT / "data" / "refs" / "versions" / str(info.get("project") or "project")
+    refs_dir = DATA_DIR / "refs" / "versions" / str(info.get("project") or "project")
     refs_dir.mkdir(parents=True, exist_ok=True)
     base = f"{info.get('entity') or shot}_{info.get('version') or 'version'}"
     downloaded = refs_dir / (base + (ext if ext in (image_exts | video_exts) else (".mp4" if is_video else ".png")))

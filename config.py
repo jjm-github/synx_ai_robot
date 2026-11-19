@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent
-CONFIG_PATH = ROOT / "config.json"
-BOTS_PATH = ROOT / "bots.json"
-PROMPT_PATH = ROOT / "prompts" / "system.md"
-DATA_DIR = ROOT / "data"
-WORKFLOWS_DIR = ROOT / "workflows"
+# Env overrides let a system-wide install keep mutable data in the user's
+# XDG directories while the program itself stays in a read-only package.
+DATA_DIR = Path(os.environ.get("IIROBOT_DATA_DIR") or (ROOT / "data")).expanduser()
+CONFIG_PATH = Path(os.environ.get("IIROBOT_CONFIG") or (ROOT / "config.json")).expanduser()
+BOTS_PATH = Path(os.environ.get("IIROBOT_BOTS") or (ROOT / "bots.json")).expanduser()
+PROMPT_PATH = Path(os.environ.get("IIROBOT_PROMPT") or (ROOT / "prompts" / "system.md")).expanduser()
+WORKFLOWS_DIR = Path(os.environ.get("IIROBOT_WORKFLOWS") or (ROOT / "workflows")).expanduser()
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "ai": {
@@ -70,7 +73,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "pipeline": {
         "auto_publish": False,
         "poll_seconds": 5,
-        "work_root": str(ROOT / "data" / "work"),
+        "work_root": str(DATA_DIR / "work"),
         "max_tasks": 0,
     },
     "voice": {
@@ -114,7 +117,7 @@ def ensure_files() -> None:
     ROOT.mkdir(parents=True, exist_ok=True)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     WORKFLOWS_DIR.mkdir(parents=True, exist_ok=True)
-    (ROOT / "prompts").mkdir(parents=True, exist_ok=True)
+    PROMPT_PATH.parent.mkdir(parents=True, exist_ok=True)
     if not CONFIG_PATH.exists():
         save_config(DEFAULT_CONFIG)
     if not BOTS_PATH.exists():

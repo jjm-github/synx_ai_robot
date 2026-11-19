@@ -9,14 +9,62 @@
 
 ## Установка
 
+### Ubuntu / Linux Mint — скрипт
+
 ```bash
-cd /home/jaroslav/Dev/synx_ai_robot
+git clone <repo> synx_ai_robot
+cd synx_ai_robot
+./install.sh
+```
+
+Скрипт ставит системные пакеты (GTK/WebKit, `ffmpeg`, `arecord`), создаёт
+`.venv`, ставит Python-зависимости, скачивает голосовые модели и создаёт
+ярлык IIRobot. ComfyUI устанавливается отдельно — приложение подключается к
+нему по URL.
+
+Основные опции:
+
+```bash
+./install.sh --yes                  # без вопросов: voice-модели есть, LLM нет
+./install.sh --llm small            # + qwen3.5:4b (~3.1 ГБ, меньше VRAM)
+./install.sh --llm default          # + qwen2.5:7b (~4.4 ГБ)
+./install.sh --llm both             # обе модели
+./install.sh --llm custom --llm-models "qwen3.5:4b gemma4:12b"
+./install.sh --no-voice-models      # без T-one/GigaAM (~450 МБ)
+./install.sh --no-ollama            # не ставить Ollama
+./install.sh --dry-run              # показать действия
+```
+
+Полный список: `./install.sh --help`.
+
+### Ubuntu / Linux Mint — .deb
+
+```bash
+./packaging/build_deb.sh
+sudo apt install ./dist/iirobot_1.0.0_amd64.deb
+```
+
+Пакет ставит приложение в `/opt/iirobot`, Python-wheels — в
+`/opt/iirobot/wheels`, поэтому установка Python-зависимостей идёт без сети.
+Данные и настройки пользователя лежат в `~/.local/share/iirobot` и
+`~/.config/iirobot`. После установки:
+
+```bash
+iirobot-setup --voice-models --llm small
+```
+
+`.deb` собирается под Python текущей системы (Ubuntu 24.04 / Mint 22 — 3.12);
+для другой версии Python собери пакет на целевой машине.
+
+### Ручная установка
+
+```bash
 python3 -m venv --system-site-packages .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
-На Linux для pywebview нужен GTK/WebKit2 (`python3-gi`, `gir1.2-webkit2-4.1`)
-либо PyQt5. На Windows/macOS pywebview использует системный webview.
+На Linux для pywebview нужен GTK/WebKit2 (`python3-gi`, `gir1.2-webkit2-4.1`
+либо PyQt5). На Windows/macOS pywebview использует системный webview.
 
 ## Запуск
 
