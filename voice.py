@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import requests
 
 from config import ROOT, load_config, save_config
 
@@ -29,6 +30,17 @@ GIGAAM = MODELS / "gigaam_v3"
 
 GLOSSARY = ("synx, синкс, шот, секвенция, локация, ассет, персонаж, раскадровка, "
             "воркфлоу, ComfyUI, LoRA, рендер, пилот, эпизод")
+
+CORRECT_SYSTEM = (
+    "Ты корректор расшифровки русской речи. Сохрани ВСЕ слова исходного текста "
+    "и их порядок. Разрешено только: расставить знаки препинания, изменить "
+    "регистр букв, исправить орфографию и написание терминов (synx, шот, "
+    "секвенция, локация, ассет, персонаж, раскадровка, воркфлоу, ComfyUI, LoRA, "
+    "рендер, пилот, эпизод). Запрещено удалять, добавлять или заменять слова, "
+    "менять числа и их форму. Верни только исправленный текст, без пояснений.\n\n"
+    "Пример:\nвход: сделай апскейл шота ноль один и опубликуй версию\n"
+    "выход: Сделай апскейл шота ноль один и опубликуй версию."
+)
 
 
 class VoiceEngine:
@@ -48,6 +60,9 @@ class VoiceEngine:
         self._final_cv = threading.Condition(self._lock)
         self._last_result: dict[str, Any] | None = None
         self._warming = False
+        self._corrector = ""
+        self._correct_seconds = 0.0
+        self._llm_warming = False
 
     # --- config ---------------------------------------------------------
     def cfg(self) -> dict[str, Any]:
@@ -104,6 +119,21 @@ class VoiceEngine:
             gc.collect()
             if self._status not in ("recording", "finalizing"):
                 self._status = "idle"
+        self._unload_corrector()
+
+    def _unload_corrector(self) -> None:
+        """Free the local LLM from VRAM when voice input is turned off."""
+        c = self._correct_cfg()
+        if str(c.get("provider") or "").lower() != "ollama":
+            return
+        try:
+            base = str(c.get("base_url") or "http://127.0.0.1:11434").rstrip("/")
+            requests.post(base + "/api/generate", json={
+                "model": str(c.get("model") or "qwen2.5:7b-instruct-q4_K_M"),
+                "keep_alive": 0,
+            }, timeout=5)
+        except Exception:
+            pass
 
     # --- warm-up --------------------------------------------------------
     def warmup(self) -> None:
@@ -163,6 +193,9 @@ class VoiceEngine:
             self._thread = threading.Thread(target=self._reader, daemon=True, name="voice-reader")
             self._thread.start()
         self.warmup()
+        # Load the correction model on the GPU while the user is speaking, so
+        # the final pass does not pay the model load time after release.
+        self.warm_corrector()
         time.sleep(0.15)
         if self._proc is not None and self._proc.poll() is not None:
             self._running = False
@@ -264,6 +297,8 @@ class VoiceEngine:
         corrected = self._correct(final) if final else ""
         result = {**self.status(), "status": "ready",
                   "final": corrected or final, "partial": partial, "raw": final,
+                  "corrector": self._corrector,
+                  "correct_seconds": self._correct_seconds,
                   "seconds": round(len(samples) / 16000.0, 2)}
         with self._lock:
             self._status = "ready"
@@ -272,33 +307,133 @@ class VoiceEngine:
             self._final_cv.notify_all()
         return result
 
+    # --- final text correction -----------------------------------------
+    def _correct_cfg(self) -> dict[str, Any]:
+        return dict(self.cfg().get("correct") or {})
+
+    def _ollama_correct(self, text: str, c: dict[str, Any]) -> str:
+        base = str(c.get("base_url") or "http://127.0.0.1:11434").rstrip("/")
+        model = str(c.get("model") or "qwen2.5:7b-instruct-q4_K_M")
+        # Enough room for the same text plus punctuation, but never runaway.
+        base_predict = int(c.get("num_predict") or 1024)
+        num_predict = max(base_predict, min(4096, len(text) // 2 + 64))
+        payload = {
+            "model": model,
+            "stream": False,
+            "keep_alive": str(c.get("keep_alive") or "5m"),
+            "options": {
+                "temperature": float(c.get("temperature", 0)),
+                "num_predict": num_predict,
+            },
+            "messages": [
+                {"role": "system", "content": CORRECT_SYSTEM},
+                {"role": "user", "content": text},
+            ],
+        }
+        r = requests.post(base + "/api/chat", json=payload,
+                          timeout=float(c.get("timeout", 30)))
+        r.raise_for_status()
+        data = r.json()
+        return str(((data.get("message") or {}).get("content")) or "").strip()
+
+    def _ai_correct(self, text: str) -> str:
+        from ai import AIClient
+        ai = AIClient()
+        if not ai.ready:
+            return ""
+        out, _ = ai.chat([
+            {"role": "system", "content": CORRECT_SYSTEM},
+            {"role": "user", "content": text},
+        ])
+        return (out or "").strip()
+
     def _correct(self, text: str) -> str:
-        if not text or not bool(self.cfg().get("llm_correct", True)):
+        self._correct_seconds = 0.0
+        if not text:
             return text
+        cfg = self.cfg()
+        if not bool(cfg.get("llm_correct", True)):
+            self._corrector = "off"
+            return text
+        c = self._correct_cfg()
+        provider = str(c.get("provider") or "ollama").strip().lower()
+        if provider in ("none", "off", "disabled"):
+            self._corrector = "off"
+            return text
+        self._corrector = provider
+        started = time.time()
         try:
-            from ai import AIClient
-            ai = AIClient()
-            if not ai.ready:
-                return text
-            prompt = (
-                "Ты редактируешь текст, распознанный с микрофона по-русски. "
-                "Исправь только пунктуацию, регистр, очевидные ошибки распознавания "
-                "и термины. Не переписывай смысл, не добавляй и не удаляй факты. "
-                f"Термины проекта: {GLOSSARY}. Верни только исправленный текст, без пояснений.\n\n"
-                f"Текст: {text}"
-            )
-            out, _ = ai.chat([
-                {"role": "system", "content": "Ты аккуратный редактор расшифровки речи."},
-                {"role": "user", "content": prompt},
-            ])
-            out = (out or "").strip().strip('"').strip("«»").strip()
-            if not out:
-                return text
-            if len(out) < len(text) * 0.5 or len(out) > len(text) * 2:
-                return text
-            return out
+            if provider == "ollama":
+                out = self._ollama_correct(text, c)
+            else:
+                out = self._ai_correct(text)
         except Exception:
+            self._correct_seconds = round(time.time() - started, 3)
             return text
+        self._correct_seconds = round(time.time() - started, 3)
+        out = (out or "").strip().strip('"').strip("«»").strip()
+        # Never let a broken model replace the transcript with garbage.
+        if not out or len(out) < len(text) * 0.5 or len(out) > len(text) * 2:
+            return text
+        if out[0].islower():
+            out = out[0].upper() + out[1:]
+        return out
+
+    def warm_corrector(self) -> None:
+        """Ask Ollama to load the correction model into VRAM in background."""
+        c = self._correct_cfg()
+        if str(c.get("provider") or "").lower() != "ollama":
+            return
+        if not bool(self.cfg().get("llm_correct", True)):
+            return
+        with self._lock:
+            if self._llm_warming:
+                return
+            self._llm_warming = True
+
+        def worker() -> None:
+            try:
+                base = str(c.get("base_url") or "http://127.0.0.1:11434").rstrip("/")
+                requests.post(base + "/api/chat", json={
+                    "model": str(c.get("model") or "qwen2.5:7b-instruct-q4_K_M"),
+                    "stream": False,
+                    "keep_alive": str(c.get("keep_alive") or "5m"),
+                    "messages": [{"role": "user", "content": "ok"}],
+                    "options": {"temperature": 0, "num_predict": 1},
+                }, timeout=min(60.0, float(c.get("timeout", 30))))
+            except Exception:
+                pass
+            finally:
+                with self._lock:
+                    self._llm_warming = False
+
+        threading.Thread(target=worker, daemon=True, name="voice-llm-warmup").start()
+
+    def test_correct(self, text: str | None = None) -> dict[str, Any]:
+        sample = (text or "это тест коррекции распознавания речи шот секвенция локация "
+                          "персонаж и рендер").strip()
+        out = self._correct(sample)
+        c = self._correct_cfg()
+        provider = str(c.get("provider") or "ollama")
+        info: dict[str, Any] = {
+            "provider": provider,
+            "model": c.get("model") if provider == "ollama" else "ai",
+            "seconds": self._correct_seconds,
+            "text": out,
+            "ok": bool(out and out != sample),
+        }
+        if provider == "ollama":
+            try:
+                base = str(c.get("base_url") or "http://127.0.0.1:11434").rstrip("/")
+                ps = requests.get(base + "/api/ps", timeout=3).json()
+                for m in ps.get("models") or []:
+                    if str(m.get("name") or "").startswith(str(c.get("model") or "")):
+                        info["vram_mb"] = int(int(m.get("size_vram") or 0) / 1048576)
+                        info["gpu"] = bool(m.get("size_vram"))
+                        break
+            except Exception:
+                pass
+        return info
 
     def transcribe_file(self, path: str | Path) -> dict[str, Any]:
         self._load()
@@ -327,7 +462,9 @@ class VoiceEngine:
             return {"enabled": self.enabled(), "status": self._status,
                     "partial": self._partial, "seconds": secs,
                     "models_loaded": self._online is not None and self._offline is not None,
-                    "warming": self._warming, "error": self._error}
+                    "warming": self._warming, "error": self._error,
+                    "corrector": self._corrector,
+                    "correct_seconds": self._correct_seconds}
 
 
 engine = VoiceEngine()

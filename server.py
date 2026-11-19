@@ -764,6 +764,14 @@ async def voice_transcribe(file: UploadFile = File(...)):
         return voice.engine.transcribe_file(path)
     except Exception as exc:
         raise HTTPException(400, str(exc))
+
+
+@app.post("/api/voice/correct/test")
+def voice_correct_test():
+    try:
+        return voice.engine.test_correct()
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
     finally:
         try:
             Path(path).unlink(missing_ok=True)

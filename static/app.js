@@ -531,7 +531,8 @@
       ta.focus();
       ta.setSelectionRange(pos, pos);
       if (d.error) toast("Голос: " + d.error, true);
-      else if (text) toast("Голос распознан");
+      else if (text) toast("Голос распознан" +
+        (d.correct_seconds ? " · коррекция " + d.correct_seconds + " с" : ""));
     } catch (e) {
       toast("Голос: " + e.message, true);
     } finally {
@@ -1065,6 +1066,13 @@
     $("layout-default").value = pa.default_layout || "";
     $("obsidian-vault").value = pa.obsidian_vault || "";
     $("comfy-timeout").value = co.timeout_sec || 1800;
+    var vo = c.voice || {}, vc = vo.correct || {};
+    $("voice-llm-correct").checked = vo.llm_correct !== false;
+    $("voice-correct-provider").value = vc.provider || "ollama";
+    $("voice-ollama-url").value = vc.base_url || "";
+    $("voice-ollama-model").value = vc.model || "";
+    $("voice-keep-alive").value = vc.keep_alive || "5m";
+    $("voice-correct-timeout").value = vc.timeout || 30;
     $("pipe-publish").checked = !!pi.auto_publish;
     $("pipe-poll").value = pi.poll_seconds || 5;
     $("pipe-work").value = pi.work_root || "";
@@ -1101,6 +1109,13 @@
     c.paths.default_layout = $("layout-default").value.trim();
     c.paths.obsidian_vault = $("obsidian-vault").value.trim();
     c.comfy.timeout_sec = Number($("comfy-timeout").value || 1800);
+    c.voice = c.voice || {}; c.voice.correct = c.voice.correct || {};
+    c.voice.llm_correct = $("voice-llm-correct").checked;
+    c.voice.correct.provider = $("voice-correct-provider").value;
+    c.voice.correct.base_url = $("voice-ollama-url").value.trim();
+    c.voice.correct.model = $("voice-ollama-model").value.trim();
+    c.voice.correct.keep_alive = $("voice-keep-alive").value.trim() || "5m";
+    c.voice.correct.timeout = Number($("voice-correct-timeout").value || 30);
     c.pipeline.auto_publish = $("pipe-publish").checked;
     c.pipeline.poll_seconds = Number($("pipe-poll").value || 5);
     c.pipeline.work_root = $("pipe-work").value.trim();
@@ -1118,6 +1133,19 @@
     try {
       var d = await api("/api/ai/test", { method: "POST" });
       el.textContent = "OK: " + (d.reply || "").slice(0, 80);
+    } catch (e) { el.textContent = "ошибка: " + e.message; }
+  });
+  $("voice-test").addEventListener("click", async function () {
+    var el = $("voice-test-result");
+    el.textContent = "проверяю...";
+    try {
+      var d = await api("/api/voice/correct/test", { method: "POST" });
+      var bits = [d.ok ? "OK" : "без изменений"];
+      if (d.seconds != null) bits.push(d.seconds + " с");
+      if (d.vram_mb) bits.push("GPU " + d.vram_mb + " МБ");
+      else if (d.provider === "ollama") bits.push("модель не в VRAM");
+      if (d.model) bits.push(d.model);
+      el.textContent = bits.join(" · ") + (d.text ? ": " + d.text.slice(0, 70) : "");
     } catch (e) { el.textContent = "ошибка: " + e.message; }
   });
 

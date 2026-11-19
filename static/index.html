@@ -223,6 +223,29 @@
         </div>
 
         <div class="card">
+          <h2>Голос</h2>
+          <label class="check"><input type="checkbox" id="voice-llm-correct"> LLM-коррекция распознанного текста</label>
+          <label>Корректор
+            <select class="input" id="voice-correct-provider">
+              <option value="ollama">Ollama — локально, GPU</option>
+              <option value="ai">Облачный AI</option>
+              <option value="none">Без коррекции</option>
+            </select>
+          </label>
+          <label>Ollama URL<input class="input" id="voice-ollama-url" placeholder="http://127.0.0.1:11434"></label>
+          <label>Модель<input class="input" id="voice-ollama-model" placeholder="qwen2.5:7b-instruct-q4_K_M"></label>
+          <div class="row2">
+            <label>Держать модель<input class="input" id="voice-keep-alive" placeholder="5m"></label>
+            <label>Таймаут, сек<input class="input" id="voice-correct-timeout" type="number"></label>
+          </div>
+          <div class="row-actions">
+            <button class="btn" id="voice-test">Проверить корректор</button>
+            <span class="muted" id="voice-test-result"></span>
+          </div>
+          <div class="muted">Локальная модель считает на видеокарте и не ждёт ответа облака; при первом включении загружается в память.</div>
+        </div>
+
+        <div class="card">
           <h2>Конвейер</h2>
           <label class="check"><input type="checkbox" id="pipe-publish"> Публиковать версии автоматически</label>
           <label>Интервал обновления таблицы, сек<input class="input" id="pipe-poll" type="number"></label>

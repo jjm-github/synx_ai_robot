@@ -76,6 +76,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "voice": {
         "enabled": True,
         "llm_correct": True,
+        "correct": {
+            "provider": "ollama",
+            "base_url": "http://127.0.0.1:11434",
+            "model": "qwen2.5:7b-instruct-q4_K_M",
+            "keep_alive": "5m",
+            "timeout": 30,
+            "temperature": 0,
+            "num_predict": 1024,
+        },
         "audio_device": "",
         "sample_rate": 16000,
         "models_dir": "data/voice/models",
