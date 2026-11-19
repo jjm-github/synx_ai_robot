@@ -439,7 +439,8 @@
     if (e.key === "Escape" && activeChatJob) { e.preventDefault(); stopChatJob(); }
   });
   // ---------- local voice input (hold to talk) ----------
-  var voiceState = {enabled: false, recording: false, polling: null, before: "", after: ""};
+  var voiceState = {enabled: false, recording: false, thinking: false,
+                    polling: null, before: "", after: "", dotTimer: null, dotIndex: 0};
   function voiceUi() {
     var on = voiceState.enabled;
     $("voice-enabled").checked = on;
@@ -462,13 +463,28 @@
       toast(d.enabled ? "Голосовой ввод включён" : "Голосовой ввод выключен, модели выгружены");
     } catch (e) { toast("Голос: " + e.message, true); this.checked = !this.checked; }
   });
+  function voiceStopDots() {
+    if (voiceState.dotTimer) { clearInterval(voiceState.dotTimer); voiceState.dotTimer = null; }
+  }
+  function voiceStartDots() {
+    voiceStopDots();
+    var seq = [1, 2, 3, 4, 5, 4, 3, 2];
+    voiceState.dotIndex = 0;
+    $("voice-btn").textContent = "Думаю.";
+    voiceState.dotTimer = setInterval(function () {
+      voiceState.dotIndex = (voiceState.dotIndex + 1) % seq.length;
+      $("voice-btn").textContent = "Думаю" + ".".repeat(seq[voiceState.dotIndex]);
+    }, 100);
+  }
   function voiceRestoreButton() {
-    $("voice-btn").classList.remove("recording");
-    $("voice-btn").textContent = "🎤 Держать";
+    voiceStopDots();
+    voiceState.thinking = false;
+    $("voice-btn").classList.remove("recording", "thinking");
+    $("voice-btn").textContent = "Нажмите";
     $("chat-input").readOnly = false;
   }
   async function voiceStart() {
-    if (!voiceState.enabled || voiceState.recording) return;
+    if (!voiceState.enabled || voiceState.recording || voiceState.thinking) return;
     var ta = $("chat-input");
     var start = ta.selectionStart != null ? ta.selectionStart : ta.value.length;
     var end = ta.selectionEnd != null ? ta.selectionEnd : ta.value.length;
@@ -476,8 +492,9 @@
     voiceState.after = ta.value.slice(end);
     voiceState.recording = true;
     ta.readOnly = true;
+    $("voice-btn").classList.remove("thinking");
     $("voice-btn").classList.add("recording");
-    $("voice-btn").textContent = "● Запись";
+    $("voice-btn").textContent = "Говорите";
     try {
       var d = await api("/api/voice/start", {method: "POST"});
       if (d.error) throw new Error(d.error);
@@ -498,8 +515,13 @@
   }
   async function voiceStop() {
     if (!voiceState.recording) return;
+    var stopStarted = Date.now();
     voiceState.recording = false;
+    voiceState.thinking = true;
     if (voiceState.polling) { clearInterval(voiceState.polling); voiceState.polling = null; }
+    $("voice-btn").classList.remove("recording");
+    $("voice-btn").classList.add("thinking");
+    voiceStartDots();
     var ta = $("chat-input");
     try {
       var d = await api("/api/voice/stop", {method: "POST"});
@@ -513,6 +535,8 @@
     } catch (e) {
       toast("Голос: " + e.message, true);
     } finally {
+      var remain = 550 - (Date.now() - stopStarted);
+      if (remain > 0) await new Promise(function (r) { setTimeout(r, remain); });
       voiceRestoreButton();
     }
   }

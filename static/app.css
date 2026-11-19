@@ -525,5 +525,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 /* Voice input: hold to talk */
 .voice-btn.hidden { display: none; }
 .voice-toggle { font-size: 12px; }
-.voice-btn.recording { background: var(--danger); border-color: var(--danger); color: #fff; animation: voice-pulse 1s ease-in-out infinite; }
-@keyframes voice-pulse { 0%,100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--danger) 55%, transparent); } 50% { box-shadow: 0 0 0 6px transparent; } }
+.voice-btn.recording { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+.voice-btn.thinking { background: #f5c542; border-color: #e0b12f; color: #241c00; animation: voice-blink 0.5s ease-in-out infinite; }
+@keyframes voice-blink { 0%,100% { box-shadow: 0 0 0 0 rgba(245,197,66,.65); } 50% { box-shadow: 0 0 0 7px rgba(245,197,66,0); } }
