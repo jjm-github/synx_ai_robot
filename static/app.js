@@ -1725,6 +1725,30 @@
     else if (e.key === "0") { e.preventDefault(); setUiZoom(1); }
   });
 
+  // ---------- brand: stretch "production assistant" to the top row width ----------
+  function fitBrandSub() {
+    var row = document.querySelector(".brand-row");
+    var sub = document.querySelector(".brand-sub");
+    if (!row || !sub) return;
+    sub.style.letterSpacing = "0px";
+    var app = $("app");
+    var scale = 1;
+    if (app && app.offsetWidth) {
+      scale = app.getBoundingClientRect().width / app.offsetWidth || 1;
+    }
+    var target = row.getBoundingClientRect().width / scale;
+    var natural = sub.getBoundingClientRect().width / scale;
+    var chars = (sub.textContent || "").replace(/\s+/g, " ").length;
+    if (!(natural > 0) || chars < 2) return;
+    var spacing = (target - natural) / chars;
+    sub.style.letterSpacing = spacing.toFixed(2) + "px";
+  }
+  fitBrandSub();
+  window.addEventListener("resize", fitBrandSub);
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(fitBrandSub).catch(function () {});
+  }
+
   // ---------- init ----------
   async function init() {
     await loadSettings();
