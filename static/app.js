@@ -1692,13 +1692,6 @@
     } catch (e) {}
     applyUiZoom();
     updateZoomUi();
-  try {
-    fetch("/api/ui/zoom").then(function (r) { return r.json(); }).then(function (d) {
-      var z = parseFloat(d && d.zoom);
-      if (!isFinite(z) || z < 0.7 || z > 1.6 || Math.abs(z - uiZoom) < 0.001) return;
-      uiZoom = z; applyUiZoom(); updateZoomUi();
-    }).catch(function () {});
-  } catch (e) {}
     toast("Масштаб: " + Math.round(uiZoom * 100) + "%");
   }
   applyUiZoom();
@@ -1718,6 +1711,13 @@
   $("zoom-out").addEventListener("click", function () { setUiZoom(uiZoom - 0.05); });
   $("zoom-value").addEventListener("click", function () { setUiZoom(1); });
   updateZoomUi();
+  try {
+    fetch("/api/ui/zoom?t=" + Date.now()).then(function (r) { return r.json(); }).then(function (d) {
+      var z = parseFloat(d && d.zoom);
+      if (!isFinite(z) || z < 0.7 || z > 1.6 || Math.abs(z - uiZoom) < 0.001) return;
+      uiZoom = z; applyUiZoom(); updateZoomUi();
+    }).catch(function () {});
+  } catch (e) {}
   document.addEventListener("keydown", function (e) {
     if (!(e.ctrlKey || e.metaKey)) return;
     if (e.key === "+" || e.key === "=") { e.preventDefault(); setUiZoom(uiZoom + 0.05); }
