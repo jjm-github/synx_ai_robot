@@ -976,6 +976,18 @@ TEXT_DOC_TOOLS = [
         }, "required": ["project", "script_path"]},
     }},
     {"type": "function", "function": {
+        "name": "create_tasks_for_all_shots",
+        "description": ("Create one missing task per shot in a synx project in a single call. "
+                        "Use for «создай задачи Conform на все шоты» instead of creating tasks "
+                        "one by one. Idempotent: existing task_name/task_type pairs are skipped."),
+        "parameters": {"type": "object", "properties": {
+            "project": {"type": "string"},
+            "task_name": {"type": "string", "default": "conform"},
+            "task_type": {"type": "string", "default": "Conform"},
+            "bot": {"type": "string", "default": "a.smirnov"},
+        }, "required": ["project"]},
+    }},
+    {"type": "function", "function": {
         "name": "start_passport_batch",
         "description": ("Queue visible pipeline tasks for location passports: 9 views + 1 preview "
                         "page = 10-page A3 PDF per location, published as a new version. "
@@ -1522,6 +1534,23 @@ def _shot_structure_request(text: str, session_id: str = "default") -> dict[str,
         latest = _latest_shot_script(project)
         path = str(latest) if latest else None
     return {"project": project, "script_path": path}
+
+
+def _all_shot_tasks_request(text: str, session_id: str = "default") -> dict[str, Any] | None:
+    """«Создай задачи Conform на все шоты» — one bulk deterministic call."""
+    low = (text or "").lower()
+    if "задач" not in low or "шот" not in low:
+        return None
+    if not re.search(r"(все|кажд|для\s+всех|на\s+все)", low):
+        return None
+    if "conform" not in low and "конформ" not in low:
+        return None
+    project = _project_from_text(text)
+    if not project:
+        focus = db.get_chat_focus(session_id) or {}
+        project = focus.get("project") or "test_proekt_vfx"
+    return {"project": project, "task_name": "conform", "task_type": "Conform",
+            "bot": "a.smirnov"}
 
 
 def _passport_batch_request(text: str, session_id: str = "default") -> dict[str, Any] | None:
@@ -2589,6 +2618,14 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
                 args.get("vault")), [], None
         except Exception as exc:
             return {"error": str(exc)}, [], None
+    if name == "create_tasks_for_all_shots":
+        try:
+            return shot_script.create_tasks_for_entities(
+                args.get("project") or "", task_name=args.get("task_name") or "conform",
+                task_type=args.get("task_type") or "Conform",
+                bot_login=args.get("bot") or "a.smirnov", progress=progress), [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
     if name == "create_shots_from_script":
         try:
             return shot_script.create_structure(
@@ -3011,6 +3048,31 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
         return {"messages": db.list_chat_messages(session_id), "usage": usage,
                 "generated": [], "playlist_text": None, "stages": stages}
 
+    # Bulk tasks for every shot ("создай Conform на все шоты").
+    tasks_req = _all_shot_tasks_request(text or "", session_id)
+    if tasks_req:
+        content = ""
+        try:
+            emit({"type": "stage", "text": "Создаю задачи на все шоты..."})
+            result = shot_script.create_tasks_for_entities(
+                tasks_req["project"], task_name=tasks_req["task_name"],
+                task_type=tasks_req["task_type"], bot_login=tasks_req["bot"],
+                progress=emit)
+            lines = [f"Готово: шотов **{result.get('shots')}**, "
+                     f"создано задач **{result.get('created')}**, "
+                     f"назначено ботов **{result.get('assigned')}**."]
+            if result.get("errors"):
+                lines.append("Ошибки: " + "; ".join(
+                    f"{e.get('shot')}: {e.get('error')}" for e in result["errors"][:8]))
+            content = "\n".join(lines)
+        except Exception as exc:
+            content = f"Не удалось создать задачи: {exc}"
+        emit({"type": "stage", "text": "Готово"})
+        db.add_chat_message(session_id, "assistant", content, generated=[],
+                            usage=usage, playlist_text=None, progress=stages)
+        return {"messages": db.list_chat_messages(session_id), "usage": usage,
+                "generated": [], "playlist_text": None, "stages": stages}
+
     # Location passport batch: 9 views + 1 preview page = 10-page A3 PDF per
     # location, published as a new version. Runs in the background.
     passport_req = _passport_batch_request(text or "", session_id)
@@ -3292,9 +3354,9 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
                 "generated": generated, "playlist_text": None, "stages": stages}
 
     seen_calls: dict[str, int] = {}
-    stop_tools = False
     try:
-        for _step in range(10):
+        max_steps = int((cfg.get("ai") or {}).get("max_tool_steps") or 100)
+        for _step in range(max_steps):
             emit({"type": "stage", "text": "Думаю..."})
             if _step:
                 _check_cancel(job or {})
@@ -3321,9 +3383,7 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
                 if repeats > 1:
                     result = {"error": "duplicate_tool_call",
                               "message": "Этот вызов уже выполнен. Используй предыдущий результат "
-                                         "и не повторяй его."}
-                    if repeats >= 2:
-                        stop_tools = True
+                                         "и не повторяй его; переходи к следующему шагу."}
                 else:
                     try:
                         emit({"type": "stage", "text": f"Инструмент: {name}"})
@@ -3338,19 +3398,16 @@ def chat_turn(session_id: str, text: str, images: list[dict[str, Any]] | None = 
                         result = {"error": str(exc)}
                 history.append({"role": "tool", "tool_call_id": call.get("id") or name,
                                 "content": json.dumps(result, ensure_ascii=False)[:12000]})
-                if stop_tools:
-                    break
-            if stop_tools:
-                break
         if not content:
             # The tool loop is over: answer from what was already collected
             # instead of dropping the request with a loop-limit message.
             try:
                 emit({"type": "stage", "text": "Формулирую ответ..."})
                 history.append({"role": "system", "content": (
-                    "Инструменты отключены. Сформулируй ответ пользователю по уже "
-                    "полученным результатам. Если данных не хватает — скажи, чего "
-                    "именно не хватает, и предложи следующий шаг.")})
+                    "Текущий шаг завершён. Сформулируй ответ пользователю по уже "
+                    "полученным результатам. Не говори, что инструменты отключены: "
+                    "они доступны. Если работа не закончена, просто перечисли, что "
+                    "осталось сделать, и продолжи в следующем сообщении.")})
                 msg, u = ai.chat_message(history)
                 usage["input"] += u.get("input", 0)
                 usage["output"] += u.get("output", 0)

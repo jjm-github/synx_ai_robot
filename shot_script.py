@@ -18,6 +18,7 @@ Rules:
 from __future__ import annotations
 
 import re
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -213,8 +214,9 @@ def create_structure(project: str, script_path: str | Path, *,
 
     cfg = load_config()
     projects_root = Path((cfg.get("paths") or {}).get("projects_root") or "/mnt/projects")
-    client = SynxClient(cfg["synx"]["base_url"], cfg["synx"]["login"], cfg["synx"]["password"])
-    proj = next((p for p in client.projects()
+    client = _retry(lambda: SynxClient(cfg["synx"]["base_url"], cfg["synx"]["login"],
+                                       cfg["synx"]["password"]))
+    proj = next((p for p in _retry(client.projects)
                  if str(p.get("alias") or "").lower() == project.lower()
                  or str(p.get("name") or "").lower() == project.lower()), None)
     if not proj:
@@ -295,7 +297,7 @@ def create_structure(project: str, script_path: str | Path, *,
                                               comment=tz, bid=3.0, status="todo")
                     tasks_created += 1
                     try:
-                        users = {u.get("short_name"): u for u in client.assignment_users(task["id"])}
+                        users = {u.get("short_name"): u for u in _retry(client.assignment_users, task["id"])}
                         user = users.get(bot_login)
                         if user:
                             client.assign(task["id"], [user["id"]])
@@ -331,3 +333,87 @@ def create_structure(project: str, script_path: str | Path, *,
             "frames_per_sequence": dict(frames_by_seq),
             "total_frames": sum(frames_by_seq.values()),
             "items": made}
+
+
+def _retry(fn, *args, attempts: int = 5, **kwargs):
+    """Retry transient synx/nginx 502/503 errors with a short backoff."""
+    last: Exception | None = None
+    for i in range(attempts):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:
+            last = exc
+            msg = str(exc).lower()
+            if "502" not in msg and "503" not in msg and "timed out" not in msg:
+                raise
+            time.sleep(1.5 * (i + 1))
+    raise last  # type: ignore[misc]
+
+
+def create_tasks_for_entities(project: str, *,
+                              task_name: str = "conform",
+                              task_type: str = "Conform",
+                              bot_login: str = "a.smirnov",
+                              progress=None) -> dict[str, Any]:
+    """Create one missing task per shot in a project (bulk, idempotent)."""
+    cfg = load_config()
+    fps = int(cfg.get("fps") or 25)
+    client = SynxClient(cfg["synx"]["base_url"], cfg["synx"]["login"], cfg["synx"]["password"])
+    proj = next((p for p in client.projects()
+                 if str(p.get("alias") or "").lower() == project.lower()
+                 or str(p.get("name") or "").lower() == project.lower()
+                 or str(p.get("id")) == str(project)), None)
+    if not proj:
+        raise ValueError(f"project not found: {project}")
+    shots = sorted((e for e in _retry(client.entities, proj["id"])
+                    if e.get("entity_kind") == "shot"), key=lambda e: e.get("name") or "")
+    created = assigned = 0
+    errors: list[dict[str, str]] = []
+    for i, shot in enumerate(shots, 1):
+        name = str(shot.get("name") or "")
+        try:
+            tasks = _retry(client.tasks, shot["id"])
+            existing = next((t for t in tasks
+                             if t.get("task_name") == task_name
+                             and t.get("task_type") == task_type), None)
+            if existing:
+                if bot_login not in (existing.get("assigned") or []):
+                    try:
+                        users = {u.get("short_name"): u for u in
+                                 _retry(client.assignment_users, existing["id"])}
+                        user = users.get(bot_login)
+                        if user:
+                            _retry(client.assign, existing["id"], [user["id"]])
+                            assigned += 1
+                    except Exception:
+                        pass
+                continue
+            frames = int(shot.get("length") or 0)
+            seconds = round(frames / fps, 1) if frames else 0
+            info = (shot.get("info") or "").strip()
+            seq = shot.get("sequence_name") or ""
+            tz = (f"ТЗ: {task_type} — {name}\n\n"
+                  f"Секвенция: {seq or '—'}\n"
+                  f"Длительность: {frames} кадров ({seconds} c, {fps} fps)\n\n"
+                  f"{info}\n\n"
+                  f"ЗАДАЧА: собрать {task_type.lower()} шота {name}: сохранить "
+                  f"длительность {frames} кадров, проверить стык с соседними шотами "
+                  f"секвенции, не менять тайминг и кадрирование.\n\n"
+                  f"СДАЧА: conform-файл в рабочей папке шота; длительность {frames} кадров.")
+            task = _retry(client.create_task, shot["id"], task_name, task_type,
+                          comment=tz, bid=3.0, status="todo")
+            created += 1
+            try:
+                users = {u.get("short_name"): u for u in client.assignment_users(task["id"])}
+                user = users.get(bot_login)
+                if user:
+                    client.assign(task["id"], [user["id"]])
+                    assigned += 1
+            except Exception:
+                pass
+        except Exception as exc:
+            errors.append({"shot": name, "error": str(exc)[:200]})
+        if progress and i % 10 == 0:
+            progress({"type": "stage", "text": f"Задачи: {i}/{len(shots)}"})
+    return {"ok": True, "shots": len(shots), "created": created,
+            "assigned": assigned, "errors": errors}

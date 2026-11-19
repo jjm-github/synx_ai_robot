@@ -28,6 +28,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "temperature": 0.2,
         "max_tokens": 4000,
         "timeout": 180,
+        "max_tool_steps": 100,
     },
     "synx": {
         "base_url": "https://synks.ru",
