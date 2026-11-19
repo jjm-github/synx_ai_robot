@@ -318,16 +318,30 @@ def create_structure(project: str, script_path: str | Path, *,
         if not se or se.get("entity_kind") != "sequence":
             continue
         total = frames_by_seq.get(code, 0)
-        shot_names = [m["name"] for m in made if m["seq"] == code]
-        auto_info = (f"СЕКВЕНЦИЯ {code} · {sq['heading']}\n"
-                     f"ТАЙМИНГ: {sq['timing']}\n"
-                     f"ЛОКАЦИЯ: {sq['heading']}\n"
-                     f"ШОТЫ: {', '.join(shot_names)}\n"
-                     f"ВСЕГО: {len(shot_names)} шотов · {total} кадров")
+        rows = [m for m in made if m["seq"] == code]
+        by_name = {m["name"]: m for m in rows}
+        shot_rows = [sh for sh in shots if sh["seq"] == code]
+        auto_lines = [f"СЕКВЕНЦИЯ {code} · {sq['heading']}",
+                      f"ТАЙМИНГ: {sq['timing']} · {total} кадров @{fps}fps",
+                      f"ЛОКАЦИЯ: {sq['heading']}", "", "СОДЕРЖАНИЕ:"]
+        for sh in shot_rows:
+            m = by_name.get(sh["name"], {})
+            rng = (f"{m.get('cut_in')}–{m.get('cut_out')}"
+                   if m.get("cut_in") is not None else "—")
+            auto_lines.append(f"- {sh['name']} · {sh.get('display_name') or sh['name']} "
+                              f"· {sh['frames']} кадров ({rng}): {sh.get('body') or ''}")
+        auto_lines += ["", f"ЗАДАЧА: Conform — {len(rows)} шотов / {total} кадров."]
+        auto_info = "\n".join(auto_lines)
         old_info = (se.get("info") or "").strip()
         info = old_info if len(old_info) > len(auto_info) else auto_info
         try:
             client.update_entity(se["id"], {"display_name": code, "info": info})
+            try:
+                existing = client.entity_comments(se["id"])
+            except Exception:
+                existing = []
+            if not any((c.get("body") or "").strip() == info for c in existing):
+                client.entity_comment(se["id"], info)
         except Exception:
             pass
 

@@ -102,6 +102,9 @@ class SynxClient:
     def task_comments(self, task_id: str) -> list[dict[str, Any]]:
         return self._get(f"/api/tasks/{task_id}/comments")["comments"]
 
+    def entity_comments(self, entity_id: str) -> list[dict[str, Any]]:
+        return self._get(f"/api/entities/{entity_id}/comments").get("comments", [])
+
     def version_comments(self, version_id: str) -> list[dict[str, Any]]:
         return self._get(f"/api/versions/{version_id}/comments")["comments"]
 

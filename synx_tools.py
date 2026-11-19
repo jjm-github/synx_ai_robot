@@ -534,6 +534,31 @@ def assign_task(task_id: str, bot_login: str) -> dict[str, Any]:
             "user_id": user["id"]}
 
 
+def entity_comments(project: str, name: str) -> dict[str, Any]:
+    c = client()
+    e = find_entity(project, name)
+    comments = c.entity_comments(e["id"])
+    return {"ok": True, "entity": e.get("name"), "comments": comments}
+
+
+def entity_comment(project: str, name: str, body: str,
+                   files: list[str] | None = None) -> dict[str, Any]:
+    """Post a chat message to an entity (sequence/asset/shot)."""
+    text = (body or "").strip()
+    if not text:
+        raise ValueError("empty comment")
+    c = client()
+    e = find_entity(project, name)
+    try:
+        existing = c.entity_comments(e["id"])
+    except Exception:
+        existing = []
+    if any((x.get("body") or "").strip() == text for x in existing):
+        return {"ok": True, "duplicate": True, "entity": e.get("name")}
+    data = c.entity_comment(e["id"], text, files or [])
+    return {"ok": True, "entity": e.get("name"), "comment": data}
+
+
 def update_entity(project: str, name: str, info: str | None = None,
                   display_name: str | None = None,
                   asset_type: str | None = None,

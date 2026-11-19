@@ -153,11 +153,12 @@ PDF на стандартных страницах, проверит его и �
   зачем. Пустое ТЗ недопустимо.
 - СЕКВЕНЦИИ — особый случай: `name` и `display_name` всегда ровно `s001`,
   `s002`, … `s014`. НИКОГДА не переименовывай секвенцию и не подставляй в
-  `display_name` описание сцены. ТЗ секвенции пишется только в `info`:
+  `display_name` описание сцены. ТЗ секвенции — это сообщение в чате сущности
+  (entity comments), а не поле `info`: вызывай `synx_entity_comment` с текстом
   `СЕКВЕНЦИЯ S01 · <локация/заголовок>`, `ТАЙМИНГ: ...`, `ЛОКАЦИЯ: ...`,
   `СОДЕРЖАНИЕ: что происходит в эпизоде`, `ПЕРСОНАЖИ: ...`, `ГРАФИКА: ...`,
-  `ШОТЫ: ...`, `ЗАДАЧА: ...`. Для секвенций вызывай `synx_update_entity`
-  только с `info`; `display_name` не передавай.
+  `ШОТЫ: ...`, `ЗАДАЧА: ...`. `info` — только краткое описание; для секвенций
+  `synx_update_entity` вызывай без `display_name`.
 - Имя задачи — slug, совпадающий с папкой/сущностью (`loc_ocean_seiner`), а не
   тип (`art`) и не кириллица. Для каждой задачи в первом комментарии — ТЗ:
   задача, исходные данные, формат сдачи, стиль, что сдать, критерии приёмки.
@@ -674,6 +675,33 @@ SYNX_TOOLS = [
                 "linked_assets": {"type": "array", "items": {"type": "string"}},
                 "linked_asset_ids": {"type": "array", "items": {"type": "string"}},
             }, "required": ["project", "name"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "synx_entity_comments",
+            "description": ("Read the chat/comments of an entity (sequence, asset, shot). "
+                            "Use it to check whether a sequence already has a TZ message."),
+            "parameters": {"type": "object", "properties": {
+                "project": {"type": "string"},
+                "name": {"type": "string"},
+            }, "required": ["project", "name"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "synx_entity_comment",
+            "description": ("Post a message to an entity's chat/comments. This is where "
+                            "a sequence TZ belongs — not in the info field. Duplicate "
+                            "identical messages are skipped."),
+            "parameters": {"type": "object", "properties": {
+                "project": {"type": "string"},
+                "name": {"type": "string"},
+                "body": {"type": "string", "description": "Full TZ/message text"},
+                "files": {"type": "array", "items": {"type": "string"}},
+            }, "required": ["project", "name", "body"]},
         },
     },
     {
@@ -2453,6 +2481,20 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
                 args.get("info"), args.get("display_name"),
                 args.get("asset_type"), args.get("linked_asset_ids"),
                 args.get("linked_assets")), [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
+    if name == "synx_entity_comments":
+        try:
+            return synx_tools.entity_comments(args.get("project") or "",
+                                              args.get("name") or ""), [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
+    if name == "synx_entity_comment":
+        try:
+            return synx_tools.entity_comment(args.get("project") or "",
+                                             args.get("name") or "",
+                                             args.get("body") or "",
+                                             list(args.get("files") or [])), [], None
         except Exception as exc:
             return {"error": str(exc)}, [], None
     if name == "synx_task_comment":
