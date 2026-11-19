@@ -212,6 +212,7 @@ def create_structure(project: str, script_path: str | Path, *,
         raise ValueError("в сценарии не найдены шоты вида **S01-01 · WS · 8 c** / s001_0010 · 200 кадров")
 
     cfg = load_config()
+    projects_root = Path((cfg.get("paths") or {}).get("projects_root") or "/mnt/projects")
     client = SynxClient(cfg["synx"]["base_url"], cfg["synx"]["login"], cfg["synx"]["password"])
     proj = next((p for p in client.projects()
                  if str(p.get("alias") or "").lower() == project.lower()
@@ -269,7 +270,7 @@ def create_structure(project: str, script_path: str | Path, *,
                     pass
         if create_folders:
             try:
-                (Path("/mnt/projects") / alias / "shots" / seq / sh["name"]).mkdir(
+                (projects_root / alias / "shots" / seq / sh["name"]).mkdir(
                     parents=True, exist_ok=True)
             except Exception:
                 pass

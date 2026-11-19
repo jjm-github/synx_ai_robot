@@ -1482,8 +1482,9 @@ def _entity_create_request(text: str) -> dict[str, Any] | None:
 
 
 def _latest_shot_script(project: str) -> Path | None:
-    from config import ROOT
-    base = Path("/mnt/projects") / project / "assets" / "main_script" / "art" / "work"
+    cfg = load_config()
+    projects_root = Path((cfg.get("paths") or {}).get("projects_root") or "/mnt/projects")
+    base = projects_root / project / "assets" / "main_script" / "art" / "work"
     files: list[Path] = []
     for pat in ("*/*pilot_shot_script*/*.md", "*/*shot_script*/*.md"):
         files += [p for p in base.glob(pat)

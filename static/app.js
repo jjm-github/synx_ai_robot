@@ -1093,6 +1093,95 @@
     else if (e.key === "ArrowRight") pdfSetPage(pdfView.current + 1);
   });
 
+  // ---------- status bar: active models ----------
+  function updateModelStatus() {
+    var c = state.config || {};
+    var ai = c.ai || {};
+    var voice = c.voice || {};
+    var corr = voice.correct || {};
+    var mainEl = $("main-model-status");
+    var mainDot = $("main-model-dot");
+    if (mainEl && mainDot) {
+      var mainModel = String(ai.model || "").trim();
+      mainEl.textContent = "модель: " + (mainModel || "не задана");
+      mainEl.title = "Основная модель: " + (mainModel || "не задана") +
+        (ai.base_url ? " · " + ai.base_url : "");
+      mainDot.className = "dot " + (mainModel ? "on" : "err");
+    }
+    var corrEl = $("correct-model-status");
+    var corrDot = $("correct-dot");
+    if (corrEl && corrDot) {
+      var enabled = voice.llm_correct !== false;
+      var provider = String(corr.provider || "ollama").toLowerCase();
+      var label;
+      if (!enabled || provider === "none" || provider === "off") label = "выключен";
+      else if (provider === "ai") label = "облачный AI";
+      else label = String(corr.model || "ollama");
+      corrEl.textContent = "корректор: " + label;
+      corrEl.title = "Коррекция речи: " + label +
+        (corr.base_url && provider === "ollama" ? " · " + corr.base_url : "");
+      corrDot.className = "dot " + (enabled && provider !== "none" && provider !== "off" ? "on" : "");
+      updateCorrectorStatus();
+    }
+  }
+
+  async function updateCorrectorStatus() {
+    var corrEl = $("correct-model-status");
+    var corrDot = $("correct-dot");
+    if (!corrEl || !corrDot) return;
+    var c = state.config || {};
+    var voice = c.voice || {};
+    var corr = voice.correct || {};
+    var enabled = voice.llm_correct !== false;
+    var provider = String(corr.provider || "ollama").toLowerCase();
+    var label;
+    if (!enabled || provider === "none" || provider === "off") {
+      corrEl.textContent = "корректор: выключен";
+      corrEl.title = "Коррекция распознанной речи выключена";
+      corrDot.className = "dot";
+      return;
+    }
+    if (provider === "ai") {
+      corrEl.textContent = "корректор: облачный AI";
+      corrEl.title = "Коррекция речи выполняется облачной моделью";
+      corrDot.className = "dot on";
+      return;
+    }
+    var name = String(corr.model || "");
+    try {
+      var d = await api("/api/voice/models");
+      var models = d.models || [];
+      var m = models.find(function (x) { return x.name === name; });
+      if (!m) {
+        corrEl.textContent = "корректор: " + (name || "ollama") + " · нет в Ollama";
+        corrEl.title = "Модель " + (name || "ollama") + " не найдена в Ollama";
+        corrDot.className = "dot err";
+        return;
+      }
+      var device, vram;
+      if (!m.loaded) {
+        device = "не загружена";
+        vram = "";
+      } else if (Number(m.vram_mb) > 0) {
+        device = "GPU";
+        vram = " · " + fmtModelSize(m.vram_mb) + " VRAM";
+      } else {
+        device = "CPU";
+        vram = "";
+      }
+      corrEl.textContent = "корректор: " + m.name + " · " + device + vram;
+      corrEl.title = "Коррекция речи: " + m.name +
+        " · " + (m.params || "?") + " · " + fmtModelSize(m.size_mb) + " на диске" +
+        (m.loaded ? " · " + device + vram : " · сейчас не загружена в память") +
+        (corr.base_url ? " · " + corr.base_url : "");
+      corrDot.className = "dot " + (m.loaded ? "on" : "");
+    } catch (e) {
+      corrEl.textContent = "корректор: " + (name || "ollama") + " · Ollama недоступен";
+      corrEl.title = "Ollama недоступен: " + e.message;
+      corrDot.className = "dot err";
+    }
+  }
+
   // ---------- config/settings ----------
   async function loadSettings() {
     try {
@@ -1100,6 +1189,7 @@
       state.bots = (await api("/api/bots")).bots || [];
       fillSettings();
       loadVoiceModels();
+      updateModelStatus();
     } catch (e) { toast("Настройки: " + e.message, true); }
   }
   function fillSettings() {
@@ -1223,6 +1313,7 @@
       var cur = ($("voice-ollama-model").value || d.current || "").trim();
       if (cur && voiceModels.some(function (m) { return m.name === cur; })) sel.value = cur;
       updateVoiceModelInfo();
+      updateCorrectorStatus();
     } catch (e) {
       voiceModels = [];
       sel.innerHTML = '<option value="">Ollama недоступен</option>';
@@ -1251,6 +1342,7 @@
   $("settings-save").addEventListener("click", async function () {
     try {
       state.config = await api("/api/config", { method: "PUT", body: JSON.stringify({ config: collectConfig() }) });
+      updateModelStatus();
       toast("Настройки сохранены");
     } catch (e) { toast("Ошибка сохранения: " + e.message, true); }
   });
@@ -1666,6 +1758,8 @@
   if (document.fonts && document.fonts.ready) {
     document.fonts.ready.then(fitBrandSub).catch(function () {});
   }
+
+  setInterval(updateCorrectorStatus, 12000);
 
   // ---------- init ----------
   async function init() {

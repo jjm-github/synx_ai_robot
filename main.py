@@ -20,6 +20,22 @@ from pathlib import Path
 import uvicorn
 
 from config import ensure_files, load_config
+
+
+def _augment_tool_path() -> None:
+    """Make bundled Windows tools (ffmpeg, poppler) available to subprocesses."""
+    base = Path(os.environ.get("IIROBOT_TOOLS_DIR") or (Path(__file__).resolve().parent / "tools"))
+    for sub in ("ffmpeg/bin", "ffmpeg", "poppler/Library/bin", "poppler/bin"):
+        path = base / sub
+        if not path.is_dir():
+            continue
+        current = os.environ.get("PATH", "")
+        if str(path) not in current.split(os.pathsep):
+            os.environ["PATH"] = str(path) + (os.pathsep + current if current else "")
+
+
+_augment_tool_path()
+
 from server import app
 
 

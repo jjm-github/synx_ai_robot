@@ -14,6 +14,12 @@ BOTS_PATH = Path(os.environ.get("IIROBOT_BOTS") or (ROOT / "bots.json")).expandu
 PROMPT_PATH = Path(os.environ.get("IIROBOT_PROMPT") or (ROOT / "prompts" / "system.md")).expanduser()
 WORKFLOWS_DIR = Path(os.environ.get("IIROBOT_WORKFLOWS") or (ROOT / "workflows")).expanduser()
 
+_IS_WINDOWS = os.name == "nt"
+_DEFAULT_PROJECTS_ROOT = "C:/Projects" if _IS_WINDOWS else "/mnt/projects"
+_DEFAULT_COMFY_ROOT = str(Path.home() / "ComfyUI") if _IS_WINDOWS else "~/opt/ComfyUI"
+_DEFAULT_COMFY_PYTHON = ".venv/Scripts/python.exe" if _IS_WINDOWS else ".venv/bin/python"
+
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "ai": {
         "base_url": "https://api.openai.com/v1",
@@ -37,7 +43,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "event_limit": 200,
     },
     "comfy": {
-        "root": "~/opt/ComfyUI",
+        "root": _DEFAULT_COMFY_ROOT,
         "base_url": "http://127.0.0.1:8199",
         "input_dir": "~/opt/ComfyUI/input",
         "output_dir": "~/opt/ComfyUI/output",
@@ -45,7 +51,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "timeout_sec": 1800,
         "auto_start": True,
         "start_timeout_sec": 120,
-        "launch_python": ".venv/bin/python",
+        "launch_python": _DEFAULT_COMFY_PYTHON,
         "launch_args": ["main.py", "--listen", "{host}", "--port", "{port}"],
         "log_path": "data/logs/comfyui.log",
         "models": {
@@ -58,17 +64,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
         },
     },
     "filesystem": {
-        "roots": ["/mnt/projects"],
+        "roots": [_DEFAULT_PROJECTS_ROOT],
     },
     "paths": {
-        "projects_root": "/mnt/projects",
+        "projects_root": _DEFAULT_PROJECTS_ROOT,
         "layouts": {
             "colossus": "shots/{sequence}/{shot}",
             "liberia": "assets/{shot}",
         },
         "default_layout": "assets/{shot}",
         "plans_dir": str(DATA_DIR / "plans"),
-        "obsidian_vault": "/home/jaroslav/obsidian_first_storage",
+        "obsidian_vault": "",
     },
     "pipeline": {
         "auto_publish": False,

@@ -56,6 +56,44 @@ iirobot-setup --voice-models --llm small
 `.deb` собирается под Python текущей системы (Ubuntu 24.04 / Mint 22 — 3.12);
 для другой версии Python собери пакет на целевой машине.
 
+### Windows 10/11 — PowerShell
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-windows.ps1
+```
+
+Скрипт работает без прав администратора: ставит Python 3.12 (winget или
+официальный установщик), создаёт `.venv`, ставит зависимости из PyPI,
+скачивает voice-модели, при необходимости ставит Ollama и LLM-модель,
+создаёт ярлыки. Для Windows дополнительно ставится `sounddevice` (WASAPI),
+а pywebview подтягивает `pythonnet` и использует Edge WebView2.
+
+Опции:
+
+```powershell
+.\install-windows.ps1 -Llm small
+.\install-windows.ps1 -Llm default -VoiceModels yes
+.\install-windows.ps1 -Llm both -Ollama yes
+.\install-windows.ps1 -NoShortcuts -SkipSystem
+```
+
+Настройки и данные: `%APPDATA%\IIRobot` и `%LOCALAPPDATA%\IIRobot`.
+ffmpeg и poppler (PDF-инструменты) скрипт ставит/скачивает автоматически.
+
+### Windows — установщик .exe
+
+Сборка выполняется **на Windows x64** (Python 3.12 + Inno Setup 6):
+
+```powershell
+winget install -e --id JRSoftware.InnoSetup
+powershell -ExecutionPolicy Bypass -File packaging\windows\build_windows.ps1
+```
+
+Результат: `dist\IIRobot-1.0.0-Setup.exe`. В установщике есть галочки
+«голосовые модели» и выбор LLM (`qwen3.5:4b`, `qwen2.5:7b`, обе).
+`build_windows.ps1` заранее скачивает Windows-wheels, Python 3.12 и
+ffmpeg/poppler, поэтому Python-зависимости ставятся из локальных wheel-файлов.
+
 ### Ручная установка
 
 ```bash
@@ -120,7 +158,8 @@ python3 -m venv --system-site-packages .venv
 - При следующем полном скане подтягиваются вложения и полный текст.
 - Раздел «Публикации» удалён из интерфейса: приложение стартует сразу в чате.
   Сканирование и разметка продолжают работать в фоне, их состояние видно в
-  статусбаре.
+  статусбаре. Там же показаны основная AI-модель и модель коррекции речи
+  вместе с устройством (CPU/GPU) и занятой VRAM.
 - Новые `@p.robot`-сообщения учитываются сканером как приоритетные.
 
 ## Таблицы

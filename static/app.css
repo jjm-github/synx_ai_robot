@@ -77,7 +77,13 @@ button, input, select, textarea { font: inherit; color: inherit; }
   padding: 0 14px; border-top: 1px solid var(--line);
   background: var(--panel); min-width: 0; overflow: hidden;
 }
-.statusbar .status-line { white-space: nowrap; }
+.statusbar .status-line { white-space: nowrap; min-width: 0; }
+.statusbar #main-model-status {
+  max-width: 230px; overflow: hidden; text-overflow: ellipsis;
+}
+.statusbar #correct-model-status {
+  max-width: 320px; overflow: hidden; text-overflow: ellipsis;
+}
 .statusbar .side-meta {
   margin-left: auto; font-size: 11px; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis;

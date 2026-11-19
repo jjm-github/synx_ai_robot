@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import gc
 import json
+import platform
+import queue
 import subprocess
 import threading
 import time
@@ -49,6 +51,8 @@ class VoiceEngine:
         self._online = None
         self._offline = None
         self._proc: subprocess.Popen | None = None
+        self._input_stream = None
+        self._audio_q: queue.Queue[bytes] = queue.Queue(maxsize=200)
         self._thread: threading.Thread | None = None
         self._running = False
         self._samples = np.zeros(0, dtype=np.float32)
@@ -114,11 +118,27 @@ class VoiceEngine:
 
     def unload(self) -> None:
         with self._lock:
+            input_stream = self._input_stream
+            self._input_stream = None
+            proc = self._proc
+            self._proc = None
+            self._running = False
             self._online = None
             self._offline = None
             gc.collect()
             if self._status not in ("recording", "finalizing"):
                 self._status = "idle"
+        if input_stream is not None:
+            try:
+                input_stream.stop()
+                input_stream.close()
+            except Exception:
+                pass
+        if proc is not None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
         self._unload_corrector()
 
     def _unload_corrector(self) -> None:
@@ -184,36 +204,80 @@ class VoiceEngine:
     def start(self) -> dict[str, Any]:
         if not self.enabled():
             raise RuntimeError("голосовой ввод выключен")
+        windows = platform.system() == "Windows"
         with self._lock:
             if self._running:
                 return self.status()
             self._partial = ""
             self._samples = np.zeros(0, dtype=np.float32)
             self._stream = None
+            self._proc = None
+            self._input_stream = None
+            self._audio_q = queue.Queue(maxsize=200)
             device = str(self.cfg().get("audio_device") or "").strip()
-            cmd = ["arecord", "-q", "-f", "S16_LE", "-r", "16000", "-c", "1", "-t", "raw"]
-            if device:
-                cmd = ["arecord", "-q", "-D", device, "-f", "S16_LE", "-r", "16000",
-                       "-c", "1", "-t", "raw"]
-            self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                          stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
+            if windows:
+                try:
+                    self._start_windows_capture(device)
+                except Exception as exc:
+                    self._status = "error"
+                    self._error = str(exc)[:300]
+                    raise RuntimeError(self._error)
+                target = self._reader_windows
+            else:
+                cmd = ["arecord", "-q", "-f", "S16_LE", "-r", "16000", "-c", "1", "-t", "raw"]
+                if device:
+                    cmd = ["arecord", "-q", "-D", device, "-f", "S16_LE", "-r", "16000",
+                           "-c", "1", "-t", "raw"]
+                self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                              stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
+                target = self._reader
             self._running = True
             self._status = "recording"
             self._started_at = time.time()
             self._error = None
-            self._thread = threading.Thread(target=self._reader, daemon=True, name="voice-reader")
+            self._thread = threading.Thread(target=target, daemon=True, name="voice-reader")
             self._thread.start()
         self.warmup()
         # Load the correction model on the GPU while the user is speaking, so
         # the final pass does not pay the model load time after release.
         self.warm_corrector()
         time.sleep(0.15)
-        if self._proc is not None and self._proc.poll() is not None:
+        if windows:
+            if self._input_stream is None:
+                self._running = False
+                self._status = "error"
+                self._error = "микрофон недоступен (sounddevice не запустился)"
+                raise RuntimeError(self._error)
+        elif self._proc is not None and self._proc.poll() is not None:
             self._running = False
             self._status = "error"
             self._error = "микрофон недоступен (arecord завершился)"
             raise RuntimeError(self._error)
         return self.status()
+
+    def _start_windows_capture(self, device: str) -> None:
+        """WASAPI capture through sounddevice (Windows only)."""
+        try:
+            import sounddevice as sd
+        except Exception as exc:
+            raise RuntimeError("для голосового ввода установи sounddevice") from exc
+        dev = None
+        if device:
+            dev = int(device) if device.isdigit() else device
+        q = self._audio_q
+
+        def callback(indata, frames, time_info, status) -> None:  # noqa: ANN001
+            try:
+                q.put_nowait(bytes(indata))
+            except queue.Full:
+                pass
+
+        stream = sd.RawInputStream(
+            samplerate=16000, channels=1, dtype="int16", blocksize=3200,
+            device=dev, callback=callback,
+        )
+        stream.start()
+        self._input_stream = stream
 
     def _reader(self) -> None:
         proc = self._proc
@@ -226,46 +290,60 @@ class VoiceEngine:
             with self._lock:
                 if not self._running:
                     return
-            x = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
-            if len(x) < 2:
-                continue
+            self._process_chunk(chunk)
+
+    def _reader_windows(self) -> None:
+        while True:
             with self._lock:
-                self._samples = np.concatenate([self._samples, x])[-60 * 16000:]
-                online = self._online
-                stream = self._stream
-                need_init = online is not None and stream is None
-                buffered = self._samples.copy() if need_init else None
-            if online is None:
-                # models are still warming up: keep the audio buffered
-                continue
+                if not self._running:
+                    return
             try:
-                if need_init:
-                    stream = online.create_stream()
-                    with self._lock:
-                        self._stream = stream
-                    data = buffered if buffered is not None else x
-                    n = len(data) - (len(data) % 2)
-                    data8 = (data[0:n:2] + data[1:n:2]) * 0.5
-                    stream.accept_waveform(8000, data8)
-                    while online.is_ready(stream):
-                        online.decode_stream(stream)
-                    with self._lock:
-                        if self._running:
-                            self._partial = (online.get_result(stream) or "").strip()
-                    continue
-                # 16k -> 8k with a cheap 2-tap anti-alias (pair average)
-                n = len(x) - (len(x) % 2)
-                x8 = (x[0:n:2] + x[1:n:2]) * 0.5
-                stream.accept_waveform(8000, x8)
+                chunk = self._audio_q.get(timeout=0.3)
+            except queue.Empty:
+                continue
+            self._process_chunk(chunk)
+
+    def _process_chunk(self, chunk: bytes) -> None:
+        x = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
+        if len(x) < 2:
+            return
+        with self._lock:
+            self._samples = np.concatenate([self._samples, x])[-60 * 16000:]
+            online = self._online
+            stream = self._stream
+            need_init = online is not None and stream is None
+            buffered = self._samples.copy() if need_init else None
+        if online is None:
+            # models are still warming up: keep the audio buffered
+            return
+        try:
+            if need_init:
+                stream = online.create_stream()
+                with self._lock:
+                    self._stream = stream
+                data = buffered if buffered is not None else x
+                n = len(data) - (len(data) % 2)
+                data8 = (data[0:n:2] + data[1:n:2]) * 0.5
+                stream.accept_waveform(8000, data8)
                 while online.is_ready(stream):
                     online.decode_stream(stream)
-                text = online.get_result(stream)
                 with self._lock:
                     if self._running:
-                        self._partial = (text or "").strip()
-            except Exception as exc:
-                with self._lock:
-                    self._error = str(exc)[:300]
+                        self._partial = (online.get_result(stream) or "").strip()
+                return
+            # 16k -> 8k with a cheap 2-tap anti-alias (pair average)
+            n = len(x) - (len(x) % 2)
+            x8 = (x[0:n:2] + x[1:n:2]) * 0.5
+            stream.accept_waveform(8000, x8)
+            while online.is_ready(stream):
+                online.decode_stream(stream)
+            text = online.get_result(stream)
+            with self._lock:
+                if self._running:
+                    self._partial = (text or "").strip()
+        except Exception as exc:
+            with self._lock:
+                self._error = str(exc)[:300]
 
     def stop(self) -> dict[str, Any]:
         with self._lock:
@@ -280,8 +358,19 @@ class VoiceEngine:
             self._status = "finalizing"
             proc = self._proc
             self._proc = None
+            input_stream = self._input_stream
+            self._input_stream = None
             samples = self._samples.copy()
             partial = self._partial
+        if input_stream is not None:
+            try:
+                input_stream.stop()
+            except Exception:
+                pass
+            try:
+                input_stream.close()
+            except Exception:
+                pass
         if proc is not None:
             try:
                 proc.terminate()
