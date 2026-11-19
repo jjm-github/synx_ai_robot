@@ -47,6 +47,8 @@ CHAT_SYSTEM = """Ты — ассистент IIRobot. Отвечай по-рус
 Ты умеешь:
 - отвечать на вопросы о производстве, synx, версиях, задачах, проектах, ComfyUI и промптах;
 - анализировать прикреплённые пользователем изображения;
+- работать с прикреплёнными файлами-референсами любого типа: читать их через
+  fs_read по путям из сообщения (PDF, .md, .txt, .json, таблицы, архивы и т. п.);
 - ходить в synx по API с данными из настроек приложения;
 - находить конкретную версию по проекту, шоту и коду версии;
 - генерировать изображения в локальном ComfyUI, в том числе из кадра версии;
@@ -1138,6 +1140,8 @@ def _system() -> str:
 def _refs_for_generation(images: list[dict[str, Any]]) -> list[str]:
     out = []
     for im in images or []:
+        if not _is_image_ref(im):
+            continue
         p = im.get("path") if isinstance(im, dict) else None
         if p and Path(p).is_file():
             out.append(str(p))
@@ -1884,9 +1888,43 @@ def _generate_from_version(project: str, shot: str, version: str | None, prompt:
     return result, generated
 
 
+def _is_image_ref(ref: dict[str, Any]) -> bool:
+    if not isinstance(ref, dict):
+        return False
+    if ref.get("kind") == "file":
+        return False
+    if ref.get("kind") == "image":
+        return True
+    mime = str(ref.get("mime") or "").lower()
+    if mime:
+        return mime.startswith("image/")
+    p = str(ref.get("path") or ref.get("name") or "")
+    return Path(p).suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff"}
+
+
+def _file_refs_note(refs: list[dict[str, Any]]) -> str:
+    files = [r for r in (refs or []) if not _is_image_ref(r)]
+    if not files:
+        return ""
+    lines = ["", "", "Прикреплённые файлы-референсы (не изображения):"]
+    for r in files:
+        size = r.get("size")
+        size_txt = ""
+        if isinstance(size, (int, float)) and size > 0:
+            mb = size / 1048576.0
+            size_txt = f", {mb:.1f} МБ" if mb >= 1 else f", {int(size / 1024)} КБ"
+        lines.append(f"- {r.get('name') or 'file'} — `{r.get('path') or ''}` "
+                     f"({r.get('mime') or 'application/octet-stream'}{size_txt})")
+    lines += ["", "Эти файлы доступны по указанным путям: читай их через fs_read. "
+                  "Не передавай не-изображения в generate_image/reference_paths."]
+    return "\n".join(lines)
+
+
 def _image_content(images: list[dict[str, Any]]) -> list[dict[str, Any]]:
     parts = []
     for im in images or []:
+        if not _is_image_ref(im):
+            continue
         p = im.get("path") if isinstance(im, dict) else None
         if p and Path(p).is_file():
             try:
@@ -1927,9 +1965,12 @@ def _history_messages(session_id: str) -> list[dict[str, Any]]:
     keep_images = set(with_images[-2:])
     for i, r in enumerate(rows):
         text_body = (r.get("content") or "")[:12000]
-        if r.get("role") == "user" and r.get("images") and i in keep_images:
+        refs = r.get("images") or []
+        if r.get("role") == "user" and refs:
+            text_body += _file_refs_note(refs)
+        if r.get("role") == "user" and refs and i in keep_images:
             content: list[dict[str, Any]] = [{"type": "text", "text": text_body}]
-            content.extend(_image_content(r["images"]))
+            content.extend(_image_content(refs))
             out.append({"role": "user", "content": content})
         else:
             out.append({"role": r.get("role") or "assistant", "content": text_body})

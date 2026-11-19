@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import os
 import platform
 import re
@@ -8,6 +9,9 @@ import shutil
 import subprocess
 import threading
 import time
+import uuid
+
+import requests
 from pathlib import Path
 from typing import Any
 
@@ -19,8 +23,6 @@ from pydantic import BaseModel
 import db
 from ai import AIClient, AIError
 from config import DATA_DIR, ROOT, load_bots, load_config, save_bots, save_config, save_system_prompt
-from paths import render_dir, task_work_dir
-from classify import classify_publication
 import fs_tools
 import mcp_manager
 import pdf_cache
@@ -31,7 +33,7 @@ from chat import (IMAGES as CHAT_IMAGES, UPLOADS as CHAT_UPLOADS,
                   chat_turn, chat_export_markdown, generate_image,
                   get_chat_job, start_chat_job, stop_chat_job)
 from pipeline import manager
-from synx import SynxClient, SynxError
+from synx import SynxClient
 
 app = FastAPI(title="IIRobot", version="0.1.0")
 
@@ -68,10 +70,6 @@ class AnalyzeBody(BaseModel):
     pass
 
 
-class CreateTaskBody(BaseModel):
-    plan: dict[str, Any] | None = None
-
-
 class PdfRenderBody(BaseModel):
     path: str
     dpi: int = 200
@@ -91,6 +89,10 @@ class ChatSendBody(BaseModel):
 
 class VoiceToggleBody(BaseModel):
     enabled: bool = True
+
+
+class VoiceModelBody(BaseModel):
+    model: str | None = None
 
 
 class UiZoomBody(BaseModel):
@@ -343,11 +345,22 @@ def get_config():
 
 @app.put("/api/config")
 def put_config(body: ConfigBody):
+    before = load_config()
     cfg = body.config
     prompt = cfg.get("ai", {}).pop("system_prompt", None)
     if prompt is not None:
         save_system_prompt(prompt)
     save_config(cfg)
+    old = (before.get("voice") or {}).get("correct") or {}
+    new = (cfg.get("voice") or {}).get("correct") or {}
+    old_model = str(old.get("model") or "")
+    if old_model and (old_model != str(new.get("model") or "")
+                      or (str(old.get("provider") or "") == "ollama"
+                          and str(new.get("provider") or "") != "ollama")):
+        try:
+            voice.engine.unload_model(old_model)
+        except Exception:
+            pass
     return load_config()
 
 
@@ -402,181 +415,6 @@ def synx_scan(body: ScanBody):
         return _scan_once(body.projects)
     except Exception as exc:
         raise HTTPException(400, str(exc))
-
-
-@app.get("/api/publications")
-def publications(status: str | None = None, limit: int = 5000):
-    return {"publications": db.list_publications(status, limit)}
-
-
-@app.get("/api/publications/changes")
-def publications_changes(since: str = "", since_id: int = 0, limit: int = 1000):
-    return {"publications": db.publications_changes(since, since_id, limit)}
-
-
-@app.post("/api/publications/{pid}/analyze")
-def analyze_publication(pid: int):
-    try:
-        plan = _analyze_publication(pid)
-    except Exception as exc:
-        db.update_publication(pid, status="analysis_error")
-        raise HTTPException(400, str(exc))
-    return {"ok": True, "plan": plan}
-
-
-@app.post("/api/publications/reclassify")
-def reclassify_publications(ai: bool = True):
-    rows = db.list_publications(limit=5000)
-    counts = {"version": 0, "continuation": 0, "unknown": 0, "needs_ai": 0}
-    need_ai: list[int] = []
-    for pub in rows:
-        c = classify_publication(pub)
-        db.update_publication(
-            pub["id"],
-            needs_action=c["needs_action"],
-            publication_type=c["publication_type"],
-            analysis_source=c["source"],
-        )
-        key = c["publication_type"] if c["publication_type"] in counts else "unknown"
-        counts[key] = counts.get(key, 0) + 1
-        if c["source"] == "needs_ai":
-            need_ai.append(int(pub["id"]))
-    counts["needs_ai"] = len(need_ai)
-    if ai and need_ai and AIClient().ready:
-        threading.Thread(target=_auto_analyze, args=(need_ai,), daemon=True,
-                         name="synx-reclassify-ai").start()
-    elif ai and need_ai and not AIClient().ready:
-        counts["needs_ai"] = len(need_ai)
-    return {"ok": True, "counts": counts, "ai_queued": len(need_ai) if ai and AIClient().ready else 0}
-
-
-@app.post("/api/publications/analyze-batch")
-def analyze_batch(limit: int = 100):
-    rows = db.all("SELECT id FROM publications WHERE analysis_json IS NULL ORDER BY id ASC LIMIT ?", (limit,))
-    ids = [int(r["id"]) for r in rows]
-    if ids and not AIClient().ready:
-        raise HTTPException(400, "AI provider is not configured")
-    if ids:
-        threading.Thread(target=_auto_analyze, args=(ids,), daemon=True,
-                         name="synx-autoclassify").start()
-    return {"ok": True, "queued": len(ids)}
-
-
-@app.post("/api/publications/{pid}/create-task")
-def create_task_from_publication(pid: int, body: CreateTaskBody | None = None):
-    pub = db.get_publication(pid)
-    if not pub:
-        raise HTTPException(404, "publication not found")
-    plan = dict((body.plan if body and body.plan else pub.get("analysis")) or {})
-    if pub.get("is_mention"):
-        guidance = re.sub(r"@p\.robot\b", "", pub.get("body") or "", flags=re.I).strip()
-        plan["needs_task"] = True
-        plan["priority"] = "high"
-        plan["addressed_to_robot"] = True
-        if not plan.get("summary"):
-            plan["summary"] = guidance or "Приоритетное указание для @p.robot"
-        if not plan.get("prompt"):
-            plan["prompt"] = guidance or plan["summary"]
-    if pub.get("answered_by_version"):
-        vnum = pub.get("answer_version_number")
-        raise HTTPException(
-            400,
-            "по этому комментарию уже выпущена версия"
-            + (f" v{int(vnum):03d}" if vnum else "")
-            + " — продолжение не требуется",
-        )
-    if not plan.get("needs_task", True):
-        raise HTTPException(400, "AI says no task is needed")
-    client = _synx()
-    project = _project_for(client, project_id=pub["project_id"])
-    task_types = client.task_types(project["id"])
-    task_type = plan.get("task_type") or "prod_gen"
-    if isinstance(task_type, dict):
-        task_type = task_type.get("code") or task_type.get("name") or task_type.get("id") or "prod_gen"
-    task_type = str(task_type)
-    if task_types and task_type not in task_types:
-        task_type = "prod_gen" if "prod_gen" in task_types else task_types[0]
-    task_name = re.sub(r"[^a-zA-Z0-9_]+", "_", str(plan.get("task_name") or "robot_task")).strip("_")[:48] or "robot_task"
-    comment = plan.get("summary") or pub.get("body") or "Synx AI Robot task"
-    try:
-        synx_task = client.create_task(pub["entity_id"], task_name, task_type,
-                                       comment=comment, bid=3.0, status="wip")
-    except SynxError as exc:
-        # 409: reuse an existing task with the same name on the entity
-        if "409" not in str(exc):
-            raise HTTPException(400, str(exc))
-        existing = next((t for t in client.tasks(pub["entity_id"]) if t.get("task_name") == task_name), None)
-        if not existing:
-            raise HTTPException(400, str(exc))
-        synx_task = existing
-    bot_login = plan.get("assignee") or "e.matveev"
-    bots = {b["login"]: b for b in load_bots() if b.get("enabled", True)}
-    if bot_login not in bots:
-        bot_login = next(iter(bots), "e.matveev")
-    try:
-        users = {u["short_name"]: u["id"] for u in client.assignment_users(synx_task["id"])}
-    except Exception:
-        users = {b["login"]: b["user_id"] for b in load_bots() if b.get("user_id")}
-    if bot_login in users:
-        client.assign(synx_task["id"], [users[bot_login]])
-    cfg = load_config()
-    entity = next((e for e in client.entities(pub["project_id"]) if e.get("id") == pub["entity_id"]), {})
-    sequence = entity.get("sequence_name") or ""
-    entity_kind = entity.get("entity_kind") or "shot"
-    versions = client.versions(pub["entity_id"])
-    source_version = next((v for v in versions if v.get("id") == pub.get("version_id")), None) or (versions[-1] if versions else {})
-    next_ver = max([int(v.get("version_number") or 0) for v in versions] + [0]) + 1
-    media = source_version.get("media") or {}
-    target_w, target_h = 2048, 864
-    frames = int(media.get("frames") or 144)
-    work = task_work_dir(cfg, project.get("alias", "project"), pub.get("shot"), sequence,
-                         task_type, bot_login, task_name, next_ver, entity_kind=entity_kind)
-    work.mkdir(parents=True, exist_ok=True)
-    renders = render_dir(cfg, project.get("alias", "project"), pub.get("shot"), sequence,
-                         next_ver, entity_kind=entity_kind)
-    renders.mkdir(parents=True, exist_ok=True)
-    plan_for_task = {k: v for k, v in plan.items() if not k.startswith("_")}
-    plan_for_task["_usage"] = plan.get("_usage")
-    source = {
-        "project_id": pub["project_id"], "project_alias": project.get("alias"),
-        "entity_id": pub["entity_id"], "shot": pub.get("shot"), "sequence": sequence,
-        "entity_kind": entity.get("entity_kind") or "shot",
-        "entity_name": entity.get("name") or pub.get("shot"),
-        "version_id": source_version.get("id"), "version_code": source_version.get("version_code"),
-        "version_number": pub.get("version_number"), "comment_id": pub.get("comment_id"),
-        "references": plan.get("_references_saved") or [], "media": media,
-        "target_version": next_ver, "width": target_w, "height": target_h,
-        "frames": frames, "seed": 20261117,
-    }
-    task_md = pub.get("analysis_md") or ""
-    task_md_path = str(work / "PLAN.md")
-    if task_md:
-        (work / "PLAN.md").write_text(task_md, encoding="utf-8")
-    tid = db.create_task({
-        "publication_id": pid,
-        "synx_task_id": synx_task["id"],
-        "project_id": pub["project_id"],
-        "entity_id": pub["entity_id"],
-        "shot": pub.get("shot"),
-        "task_name": task_name,
-        "task_type": task_type,
-        "bot": bot_login,
-        "status": "queued",
-        "stage": "queued",
-        "progress": 0,
-        "prompt": plan.get("prompt") or "",
-        "negative": plan.get("negative") or "",
-        "plan_json": json.dumps(plan_for_task, ensure_ascii=False),
-        "plan_md": task_md,
-        "plan_md_path": task_md_path,
-        "workflow_json": json.dumps(plan.get("workflow"), ensure_ascii=False) if plan.get("workflow") else None,
-        "source_json": json.dumps(source, ensure_ascii=False),
-        "work_dir": str(work),
-        "render_dir": str(renders),
-        "priority": 1 if pub.get("is_mention") and not pub.get("answered_by_version") else 0,
-    })
-    db.update_publication(pid, status="task_created")
-    return {"ok": True, "task": db.get_task(tid), "synx_task": synx_task}
 
 
 @app.get("/api/mcp/servers")
@@ -751,6 +589,41 @@ def voice_toggle(body: VoiceToggleBody):
     return voice.toggle(body.enabled)
 
 
+@app.get("/api/voice/models")
+def voice_models():
+    c = (load_config().get("voice") or {}).get("correct") or {}
+    base = str(c.get("base_url") or "http://127.0.0.1:11434").rstrip("/")
+    try:
+        tags = requests.get(base + "/api/tags", timeout=4).json()
+        ps = requests.get(base + "/api/ps", timeout=4).json()
+    except Exception as exc:
+        raise HTTPException(400, f"Ollama недоступен: {exc}")
+    loaded = {str(m.get("name") or ""): m for m in (ps.get("models") or [])}
+    out = []
+    for m in tags.get("models") or []:
+        name = str(m.get("name") or "")
+        det = m.get("details") or {}
+        lm = loaded.get(name) or {}
+        out.append({
+            "name": name,
+            "size_mb": int(int(m.get("size") or 0) / 1048576),
+            "vram_mb": int(int(lm.get("size_vram") or 0) / 1048576),
+            "loaded": bool(lm),
+            "params": det.get("parameter_size"),
+            "quant": det.get("quantization_level"),
+        })
+    out.sort(key=lambda x: x.get("size_mb") or 0)
+    return {"base_url": base, "current": c.get("model"), "models": out}
+
+
+@app.post("/api/voice/models/unload")
+def voice_models_unload(body: VoiceModelBody | None = None):
+    try:
+        return voice.engine.unload_model((body.model if body else None) or None)
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+
+
 @app.post("/api/voice/transcribe")
 async def voice_transcribe(file: UploadFile = File(...)):
     import tempfile
@@ -808,24 +681,44 @@ def chat_job_stop(job_id: str):
 
 @app.post("/api/chat/upload")
 async def chat_upload(file: UploadFile = File(...)):
-    import uuid
     from PIL import Image
     raw = await file.read()
     if not raw:
         raise HTTPException(400, "empty file")
-    tmp = CHAT_UPLOADS / f"{uuid.uuid4().hex[:12]}.upload"
-    tmp.write_bytes(raw)
-    try:
-        im = Image.open(tmp).convert("RGB")
-    except Exception as exc:
-        tmp.unlink(missing_ok=True)
-        raise HTTPException(400, f"not an image: {exc}")
-    name = f"{uuid.uuid4().hex[:12]}.png"
-    dst = CHAT_UPLOADS / name
-    im.save(dst)
-    tmp.unlink(missing_ok=True)
-    return {"ok": True, "name": file.filename or name, "path": str(dst),
-            "url": f"/api/chat/file/uploads/{name}"}
+    original = Path(file.filename or "file").name or "file"
+    safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", original).strip("._") or "file"
+    mime = (file.content_type or mimetypes.guess_type(safe_name)[0]
+            or "application/octet-stream")
+    kind = "file"
+    stored = ""
+    dst: Path | None = None
+    if mime.startswith("image/"):
+        # Raster images are normalised to PNG for reliable previews; anything
+        # Pillow cannot decode (SVG, AVIF without a plugin, etc.) is kept as is.
+        tmp = CHAT_UPLOADS / f"{uuid.uuid4().hex[:12]}.upload"
+        tmp.write_bytes(raw)
+        try:
+            im = Image.open(tmp).convert("RGB")
+            stored = f"{uuid.uuid4().hex[:12]}.png"
+            dst = CHAT_UPLOADS / stored
+            im.save(dst)
+            mime = "image/png"
+            kind = "image"
+        except Exception:
+            suffix = Path(safe_name).suffix[:12]
+            stored = f"{uuid.uuid4().hex[:12]}{suffix}"
+            dst = CHAT_UPLOADS / stored
+            dst.write_bytes(raw)
+        finally:
+            tmp.unlink(missing_ok=True)
+    if dst is None:
+        suffix = Path(safe_name).suffix[:12]
+        stored = f"{uuid.uuid4().hex[:12]}{suffix}"
+        dst = CHAT_UPLOADS / stored
+        dst.write_bytes(raw)
+    return {"ok": True, "name": original, "stored": stored,
+            "path": str(dst), "url": f"/api/chat/file/uploads/{stored}",
+            "mime": mime, "size": len(raw), "kind": kind}
 
 
 @app.post("/api/chat/clear")

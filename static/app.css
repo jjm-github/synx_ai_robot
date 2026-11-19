@@ -265,6 +265,17 @@ textarea.input { resize: vertical; min-height: 220px; }
 .chat-chip { position: relative; width: 64px; height: 64px; border-radius: 4px; overflow: hidden; border: 1px solid var(--line); background: var(--bg); }
 .chat-chip img { width: 100%; height: 100%; object-fit: cover; }
 .chat-chip button { position: absolute; right: 2px; top: 2px; width: 18px; height: 18px; border-radius: 50%; border: 0; background: color-mix(in srgb, var(--bg), var(--line) 70%); color: var(--accent-ink); cursor: pointer; font-size: 12px; line-height: 1; }
+.chat-chip-file { width: auto; max-width: 220px; display: flex; align-items: center; gap: 6px; padding: 6px 22px 6px 8px; cursor: pointer; }
+.chat-chip-file:hover { border-color: var(--accent-soft-line); }
+.chat-chip-file-icon { flex: 0 0 auto; font-size: 20px; line-height: 1; color: var(--ink-soft); }
+.chat-chip-file-name { min-width: 0; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--ink); }
+.msg-files { display: flex; flex-wrap: wrap; gap: 6.8px; margin-top: 7.65px; }
+.msg-file { display: flex; align-items: center; gap: 8px; max-width: 100%; padding: 6px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--field-bg); cursor: pointer; }
+.msg-file:hover { border-color: var(--accent); }
+.msg-file-icon { flex: 0 0 auto; font-size: 18px; line-height: 1; color: var(--ink-soft); }
+.msg-file-body { display: flex; flex-direction: column; min-width: 0; }
+.msg-file-name { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--ink); }
+.msg-file-meta { font-size: 10.5px; color: var(--ink-soft); }
 .chat-empty { margin: auto; text-align: center; color: var(--ink-soft); max-width: 460px; }
 .chat-empty b { color: var(--ink); }
 

@@ -18,9 +18,8 @@
       <div class="brand-sub">production assistant</div>
     </div>
     <nav class="nav">
-      <button class="nav-btn active" data-view="publications">Публикации</button>
       <button class="nav-btn" data-view="tasks">Задачи</button>
-      <button class="nav-btn" data-view="chat">Чат</button>
+      <button class="nav-btn active" data-view="chat">Чат</button>
     </nav>
     <div class="side-bottom">
       <button class="nav-btn" data-view="settings">Настройки</button>
@@ -31,8 +30,8 @@
   <main class="main">
     <header class="topbar">
       <div>
-        <h1 id="view-title">Публикации</h1>
-        <div class="muted" id="view-subtitle">Новые комментарии и review-замечания из synx</div>
+        <h1 id="view-title">Чат</h1>
+        <div class="muted" id="view-subtitle">Диалог с моделью, референсы и генерация изображений в ComfyUI</div>
       </div>
       <div class="top-actions">
         <span class="zoom-control" title="Масштаб интерфейса (Ctrl + колесо)">
@@ -45,59 +44,6 @@
         <button class="btn primary" id="pipeline-toggle">Запустить конвейер</button>
       </div>
     </header>
-
-    <section class="view active" id="view-publications">
-      <div class="toolbar">
-        <input class="input grow" id="pub-filter" placeholder="Фильтр по шоту, автору, тексту...">
-        <select class="input" id="pub-status">
-          <option value="">все статусы</option>
-          <option value="new">новые</option>
-          <option value="analyzed">разобраны</option>
-          <option value="task_created">задача создана</option>
-          <option value="no_task">без задачи</option>
-          <option value="analysis_error">ошибка анализа</option>
-        </select>
-        <select class="input" id="pub-action">
-          <option value="">все события</option>
-          <option value="continuation">с продолжением</option>
-          <option value="version">просто версия</option>
-          <option value="unknown">не разобрано</option>
-          <option value="answered">отвечено версией</option>
-          <option value="mention">упоминания @p.robot</option>
-          <option value="images">с картинками</option>
-        </select>
-        <label class="check inline-check"><input type="checkbox" id="pub-show-noaction" checked> Показывать версии</label>
-        <label class="check inline-check"><input type="checkbox" id="pub-show-answered"> Показывать отвеченные</label>
-        <button class="btn" id="pub-reclassify">Переанализировать всё</button>
-        <button class="btn" id="pub-analyze-batch">Разметить AI</button>
-        <button class="btn" id="pub-refresh">Обновить</button>
-      </div>
-      <div class="table-wrap">
-        <table class="data" id="pub-table" data-default-hidden="">
-          <thead>
-            <tr>
-              <th data-col="project">Проект</th>
-              <th data-col="shot">Шот</th>
-              <th data-col="thread">Тред</th>
-              <th data-col="version">Версия</th>
-              <th data-col="author">Автор</th>
-              <th data-col="body">Комментарий</th>
-              <th data-col="attachments">Референсы</th>
-              <th data-col="status">Статус</th>
-              <th data-col="action">Тип публикации</th>
-              <th data-col="actions">Действия</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <div class="hint">ПКМ по заголовку — ширины и видимость колонок. Двойной клик по строке — открыть план .md.</div>
-      <div class="bulkbar">
-        <button class="btn" id="pub-analyze-selected">Разобрать выбранные</button>
-        <button class="btn primary" id="pub-create-selected">Создать задачи</button>
-        <span class="muted" id="pub-selected-count">0 выбрано</span>
-      </div>
-    </section>
 
     <section class="view" id="view-tasks">
       <div class="toolbar">
@@ -140,7 +86,7 @@
     </section>
 
 
-    <section class="view" id="view-chat">
+    <section class="view active" id="view-chat">
       <div class="chat-shell">
         <div class="chat-head">
           <div>
@@ -160,7 +106,7 @@
           <div class="chat-chips" id="chat-chips"></div>
           <textarea class="input chat-input" id="chat-input" rows="3" placeholder="Напиши вопрос или попроси: «нарисуй ... по этим референсам»"></textarea>
           <div class="chat-actions">
-            <label class="btn attach-btn">+ Референс<input type="file" id="chat-files" accept="image/*" multiple hidden></label>
+            <label class="btn attach-btn" title="Прикрепить референс любого типа: изображение, PDF, видео, .md, .json и т. д.">+ Референс<input type="file" id="chat-files" multiple hidden></label>
             <button class="btn voice-btn hidden" id="voice-btn" title="Голосовой ввод: удерживайте для произнесения текста">Нажмите</button>
             <label class="check inline-check voice-toggle" title="Локальный голосовой ввод (T-one + GigaAM)"><input type="checkbox" id="voice-enabled"> голос</label>
             <button class="btn primary" id="chat-send">Отправить</button>
@@ -234,6 +180,14 @@
           </label>
           <label>Ollama URL<input class="input" id="voice-ollama-url" placeholder="http://127.0.0.1:11434"></label>
           <label>Модель<input class="input" id="voice-ollama-model" placeholder="qwen2.5:7b-instruct-q4_K_M"></label>
+          <div class="row-actions">
+            <select class="input grow" id="voice-model-pick">
+              <option value="">Установленные модели…</option>
+            </select>
+            <button class="btn" id="voice-models-refresh" type="button">Обновить</button>
+            <button class="btn" id="voice-model-unload" type="button">Выгрузить из VRAM</button>
+          </div>
+          <div class="muted" id="voice-model-info">—</div>
           <div class="row2">
             <label>Держать модель<input class="input" id="voice-keep-alive" placeholder="5m"></label>
             <label>Таймаут, сек<input class="input" id="voice-correct-timeout" type="number"></label>

@@ -2,8 +2,7 @@
   "use strict";
 
   var $ = function (id) { return document.getElementById(id); };
-  var state = { config: null, bots: [], pubs: [], tasks: [], activeId: null, view: "publications",
-                pubSyncAt: "", pubSyncId: 0 };
+  var state = { config: null, bots: [], tasks: [], activeId: null, view: "chat" };
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
@@ -45,7 +44,6 @@
     document.querySelectorAll(".nav-btn").forEach(function (b) { b.classList.toggle("active", b.dataset.view === v); });
     document.querySelectorAll(".view").forEach(function (x) { x.classList.toggle("active", x.id === "view-" + v); });
     var titles = {
-      publications: ["Публикации", "Новые комментарии и review-замечания из synx"],
       tasks: ["Задачи", "Очередь производства и этапы выполнения"],
       chat: ["Чат", "Диалог с моделью, референсы и генерация изображений в ComfyUI"],
       settings: ["Настройки", "AI, synx, ComfyUI, боты и системный промпт"]
@@ -53,7 +51,6 @@
     $("view-title").textContent = titles[v][0];
     $("view-subtitle").textContent = titles[v][1];
     if (v === "tasks") loadTasks();
-    if (v === "publications") loadPublications();
     if (v === "chat") loadChat();
     if (v === "settings") loadSettings();
   }
@@ -74,13 +71,42 @@
     }
     return esc(text).replace(/\n/g, "<br>");
   }
+  function isImageRef(im) {
+    if (!im) return false;
+    if (im.kind === "file") return false;
+    if (im.kind === "image") return true;
+    var mime = String(im.mime || "").toLowerCase();
+    if (mime) return mime.indexOf("image/") === 0;
+    var p = String(im.path || im.name || im.url || "").toLowerCase();
+    return /\.(png|jpe?g|webp|gif|bmp|tiff?)$/.test(p);
+  }
+  function fileSizeText(n) {
+    n = Number(n || 0);
+    if (!n) return "";
+    if (n >= 1048576) return (n / 1048576).toFixed(1) + " МБ";
+    if (n >= 1024) return Math.round(n / 1024) + " КБ";
+    return n + " Б";
+  }
+  function chatFileHtml(im) {
+    var path = im.path || "";
+    var size = fileSizeText(im.size);
+    var meta = [im.mime || "файл", size].filter(Boolean).join(" · ");
+    return '<div class="msg-file" data-chat-file-path="' + esc(path) + '" title="Открыть файл">' +
+      '<span class="msg-file-icon">▤</span><span class="msg-file-body">' +
+      '<span class="msg-file-name">' + esc(im.name || "файл") + '</span>' +
+      '<span class="msg-file-meta">' + esc(meta) + '</span></span></div>';
+  }
   function messageMarkdown(m) {
     var md = String((m && m.content) || "");
     if (m && m.role === "user" && (m.images || []).length) {
       md += "\n";
       (m.images || []).forEach(function (im) {
         var url = im.url || ("/api/chat/file/uploads/" + (im.name || ""));
-        md += "\n![" + (im.name || "image") + "](" + url + ")";
+        if (isImageRef(im)) {
+          md += "\n![" + (im.name || "image") + "](" + url + ")";
+        } else {
+          md += "\n[Файл: " + (im.name || "file") + "](" + url + ")";
+        }
         if (im.path) md += "\nФайл: `" + im.path + "`";
       });
     }
@@ -121,7 +147,7 @@
   function renderChatMessages(msgs) {
     var box = $("chat-messages");
     if (!msgs || !msgs.length) {
-      box.innerHTML = '<div class="chat-empty"><b>Чат с моделью</b><br><br>Спроси что-нибудь или попроси:<br>«Нарисуй кадр в стиле чёрной туши по этим референсам».<br>Референсы можно прикрепить кнопкой «+ Референс».</div>';
+      box.innerHTML = '<div class="chat-empty"><b>Чат с моделью</b><br><br>Спроси что-нибудь или попроси:<br>«Нарисуй кадр в стиле чёрной туши по этим референсам».<br>Референсы любого типа можно прикрепить кнопкой «+ Референс» или перетащить в поле ввода.</div>';
       return;
     }
     box.innerHTML = "";
@@ -130,14 +156,17 @@
       var wrap = document.createElement("div");
       wrap.className = "msg " + (isUser ? "user" : "assistant");
       wrap.__msg = m;
-      var imgs = (isUser ? m.images : m.generated) || [];
+      var refs = (isUser ? m.images : m.generated) || [];
+      var imgs = refs.filter(isImageRef);
+      var files = refs.filter(function (im) { return !isImageRef(im); });
       var imgHtml = imgs.length ? '<div class="msg-images">' + imgs.map(function (im) { return chatImageHtml(im, !isUser); }).join("") + "</div>" : "";
+      var filesHtml = files.length ? '<div class="msg-files">' + files.map(chatFileHtml).join("") + "</div>" : "";
       var textHtml = isUser ? '<div class="msg-text">' + esc(m.content || "").replace(/\n/g, "<br>") + "</div>" : '<div class="msg-text markdown-body">' + mdHtml(m.content || "") + "</div>";
       var usage = m.usage && (m.usage.input || m.usage.output) ? '<div class="msg-meta">токены: ' + (m.usage.input || 0) + " / " + (m.usage.output || 0) + "</div>" : "";
       var progress = (m.progress || []).filter(function (e) { return e.type === "stage"; }).map(function (e) { return esc(e.text || ""); }).join("<br>");
       var progressHtml = progress ? '<details class="msg-progress"><summary>Этапы выполнения</summary><div>' + progress + '</div></details>' : "";
       var playlist = m.playlist_text ? '<div class="playlist-card"><div class="playlist-card-head"><b>Плейлист Synx</b><button class="btn" data-copy-playlist>Скопировать</button></div><details><summary>Показать текст плейлиста</summary><pre>' + esc(m.playlist_text) + '</pre></details></div>' : "";
-      wrap.innerHTML = '<div class="msg-avatar">' + (isUser ? "Я" : "AI") + '</div><div class="msg-bubble">' + textHtml + imgHtml + progressHtml + playlist + usage + "</div>";
+      wrap.innerHTML = '<div class="msg-avatar">' + (isUser ? "Я" : "AI") + '</div><div class="msg-bubble">' + textHtml + imgHtml + filesHtml + progressHtml + playlist + usage + "</div>";
       box.appendChild(wrap);
     });
     box.querySelectorAll(".msg-text code").forEach(function (c) {
@@ -174,12 +203,30 @@
   function renderChatChips() {
     var box = $("chat-chips"); box.innerHTML = "";
     chatAttachments.forEach(function (im, i) {
-      var d = document.createElement("div"); d.className = "chat-chip";
-      d.innerHTML = '<img src="' + esc(im.url) + '" alt=""><button data-chip="' + i + '">×</button>';
+      var d = document.createElement("div");
+      if (isImageRef(im)) {
+        d.className = "chat-chip";
+        d.innerHTML = '<img src="' + esc(im.url) + '" alt=""><button data-chip="' + i + '">×</button>';
+      } else {
+        d.className = "chat-chip chat-chip-file";
+        d.title = "Открыть файл: " + (im.name || "");
+        d.dataset.chipOpen = im.path || "";
+        d.innerHTML = '<span class="chat-chip-file-icon">▤</span>' +
+          '<span class="chat-chip-file-name">' + esc(im.name || "файл") + '</span>' +
+          '<button data-chip="' + i + '">×</button>';
+      }
       box.appendChild(d);
     });
     $("chat-chips").querySelectorAll("[data-chip]").forEach(function (b) {
-      b.addEventListener("click", function () { chatAttachments.splice(Number(b.dataset.chip), 1); renderChatChips(); });
+      b.addEventListener("click", function (e) {
+        e.stopPropagation();
+        chatAttachments.splice(Number(b.dataset.chip), 1); renderChatChips();
+      });
+    });
+    $("chat-chips").querySelectorAll("[data-chip-open]").forEach(function (el) {
+      el.addEventListener("click", function () {
+        if (el.dataset.chipOpen) openPath(el.dataset.chipOpen);
+      });
     });
   }
   function insertIntoChatInput(text) {
@@ -269,10 +316,17 @@
     $("chat-composer").classList.add("drop-active");
   });
   $("chat-composer").addEventListener("dragover", function (e) {
-    var hasText = chatDrag.text || (e.dataTransfer &&
-      Array.from(e.dataTransfer.types || []).indexOf("text/plain") >= 0);
-    if (!hasText) return;
+    var dt = e.dataTransfer || {};
+    var hasFiles = Array.from(dt.types || []).indexOf("Files") >= 0;
+    var hasText = chatDrag.text || Array.from(dt.types || []).indexOf("text/plain") >= 0;
+    if (!hasFiles && !hasText) return;
     e.preventDefault();
+    if (dt.dropEffect !== undefined) dt.dropEffect = "copy";
+    if (hasFiles) {
+      showDropCaret(null);
+      $("chat-composer").classList.add("drop-active");
+      return;
+    }
     var ta = $("chat-input"), r = ta.getBoundingClientRect();
     var over = e.clientX >= r.left && e.clientX <= r.right &&
                e.clientY >= r.top && e.clientY <= r.bottom;
@@ -291,6 +345,12 @@
   });
   $("chat-composer").addEventListener("drop", function (e) {
     e.preventDefault();
+    var files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+    if (files.length) {
+      hideDropCaret();
+      uploadChatFiles(files, "Референс");
+      return;
+    }
     var text = chatDrag.text || (e.dataTransfer && e.dataTransfer.getData("text/plain")) || "";
     var offset = chatDrag.offset;
     hideDropCaret();
@@ -314,13 +374,26 @@
   var chatHover = false;
   $("view-chat").addEventListener("mouseenter", function () { chatHover = true; });
   $("view-chat").addEventListener("mouseleave", function () { chatHover = false; });
-  async function uploadChatImage(file) {
+  async function uploadChatFile(file) {
     var fd = new FormData();
     fd.append("file", file);
     var r = await fetch("/api/chat/upload", { method: "POST", body: fd });
     var d = await r.json();
     if (!r.ok) throw new Error(d.detail || "upload failed");
     return d;
+  }
+  async function uploadChatFiles(files, label) {
+    var added = 0;
+    for (var i = 0; i < files.length; i++) {
+      try { chatAttachments.push(await uploadChatFile(files[i])); added++; }
+      catch (err) { toast((label || "Референс") + ": " + err.message, true); }
+    }
+    if (added) {
+      renderChatChips();
+      $("chat-input").focus();
+      toast(added === 1 ? "Референс прикреплён" : "Референсов прикреплено: " + added);
+    }
+    return added;
   }
   document.addEventListener("paste", async function (e) {
     if (!chatHover) return;
@@ -329,35 +402,24 @@
       .map(function (it) { return it.getAsFile(); }).filter(Boolean);
     if (!files.length) return;
     e.preventDefault();
-    for (var i = 0; i < files.length; i++) {
-      try { chatAttachments.push(await uploadChatImage(files[i])); }
-      catch (err) { toast("Вставка: " + err.message, true); }
-    }
-    renderChatChips();
-    $("chat-input").focus();
-    toast("Картинка вставлена в запрос");
+    await uploadChatFiles(files, "Вставка");
   });
 
   $("chat-files").addEventListener("change", async function () {
     var files = Array.from(this.files || []); this.value = "";
-    for (var i = 0; i < files.length; i++) {
-      try {
-        var fd = new FormData(); fd.append("file", files[i]);
-        var r = await fetch("/api/chat/upload", { method: "POST", body: fd });
-        var d = await r.json();
-        if (!r.ok) throw new Error(d.detail || "upload failed");
-        chatAttachments.push(d);
-      } catch (e) { toast("Референс: " + e.message, true); }
-    }
-    renderChatChips();
+    await uploadChatFiles(files, "Референс");
   });
   function appendUserBubble(text, images) {
     var box = $("chat-messages");
     var empty = box.querySelector(".chat-empty"); if (empty) box.innerHTML = "";
     var wrap = document.createElement("div"); wrap.className = "msg user";
-    var imgs = (images || []).map(function (im) { return '<img src="' + esc(im.url) + '" data-chat-image="1" alt="">'; }).join("");
+    var refs = images || [];
+    var imgs = refs.filter(isImageRef);
+    var files = refs.filter(function (im) { return !isImageRef(im); });
+    var imgHtml = imgs.map(function (im) { return '<img src="' + esc(im.url) + '" data-chat-image="1" alt="">'; }).join("");
+    var filesHtml = files.length ? '<div class="msg-files">' + files.map(chatFileHtml).join("") + '</div>' : "";
     wrap.innerHTML = '<div class="msg-avatar">Я</div><div class="msg-bubble"><div class="msg-text">' + esc(text || "").replace(/\n/g, "<br>") + '</div>' +
-      (imgs ? '<div class="msg-images">' + imgs + '</div>' : "") + '</div>';
+      (imgHtml ? '<div class="msg-images">' + imgHtml + '</div>' : "") + filesHtml + '</div>';
     box.appendChild(wrap); box.scrollTop = box.scrollHeight;
     return wrap;
   }
@@ -665,6 +727,8 @@
       copyText(pre ? pre.textContent : "");
       return;
     }
+    var f = e.target.closest("[data-chat-file-path]");
+    if (f) { openPath(f.dataset.chatFilePath); return; }
     var im = e.target.closest("[data-chat-image]");
     if (im) openViewer(im.src, im.dataset.title || "image");
   });
@@ -1035,6 +1099,7 @@
       state.config = await api("/api/config");
       state.bots = (await api("/api/bots")).bots || [];
       fillSettings();
+      loadVoiceModels();
     } catch (e) { toast("Настройки: " + e.message, true); }
   }
   function fillSettings() {
@@ -1121,6 +1186,68 @@
     c.pipeline.work_root = $("pipe-work").value.trim();
     return c;
   }
+  var voiceModels = [];
+  function fmtModelSize(mb) {
+    mb = Number(mb || 0);
+    if (mb >= 1024) return (mb / 1024).toFixed(1) + " ГБ";
+    return Math.round(mb) + " МБ";
+  }
+  function updateVoiceModelInfo() {
+    var el = $("voice-model-info");
+    if (!el) return;
+    var name = ($("voice-ollama-model").value || "").trim();
+    if (!name) { el.textContent = "—"; return; }
+    var m = voiceModels.find(function (x) { return x.name === name; });
+    if (!m) { el.textContent = "Модель не найдена в Ollama — проверь имя или обнови список."; return; }
+    var bits = [m.name, fmtModelSize(m.size_mb) + " на диске"];
+    if (m.params) bits.push(m.params);
+    if (m.loaded) bits.push("в VRAM: " + fmtModelSize(m.vram_mb));
+    else bits.push("не загружена в VRAM");
+    el.textContent = bits.join(" · ");
+  }
+  async function loadVoiceModels() {
+    var sel = $("voice-model-pick");
+    if (!sel) return;
+    try {
+      var d = await api("/api/voice/models");
+      voiceModels = d.models || [];
+      sel.innerHTML = '<option value="">Установленные модели…</option>';
+      voiceModels.forEach(function (m) {
+        var o = document.createElement("option");
+        o.value = m.name;
+        o.textContent = m.name + " · " + fmtModelSize(m.size_mb) +
+          (m.params ? " · " + m.params : "") +
+          (m.loaded ? " · VRAM " + fmtModelSize(m.vram_mb) : "");
+        sel.appendChild(o);
+      });
+      var cur = ($("voice-ollama-model").value || d.current || "").trim();
+      if (cur && voiceModels.some(function (m) { return m.name === cur; })) sel.value = cur;
+      updateVoiceModelInfo();
+    } catch (e) {
+      voiceModels = [];
+      sel.innerHTML = '<option value="">Ollama недоступен</option>';
+      updateVoiceModelInfo();
+    }
+  }
+  $("voice-model-pick").addEventListener("change", function () {
+    if (this.value) {
+      $("voice-ollama-model").value = this.value;
+      updateVoiceModelInfo();
+    }
+  });
+  $("voice-ollama-model").addEventListener("input", updateVoiceModelInfo);
+  $("voice-models-refresh").addEventListener("click", loadVoiceModels);
+  $("voice-model-unload").addEventListener("click", async function () {
+    var model = ($("voice-ollama-model").value || "").trim();
+    try {
+      var d = await api("/api/voice/models/unload", {
+        method: "POST", body: JSON.stringify({ model: model })
+      });
+      toast("Выгружено из VRAM: " + ((d.unloaded || []).join(", ") || "—"));
+      await loadVoiceModels();
+    } catch (e) { toast("Выгрузка: " + e.message, true); }
+  });
+
   $("settings-save").addEventListener("click", async function () {
     try {
       state.config = await api("/api/config", { method: "PUT", body: JSON.stringify({ config: collectConfig() }) });
@@ -1146,6 +1273,7 @@
       else if (d.provider === "ollama") bits.push("модель не в VRAM");
       if (d.model) bits.push(d.model);
       el.textContent = bits.join(" · ") + (d.text ? ": " + d.text.slice(0, 70) : "");
+      loadVoiceModels();
     } catch (e) { el.textContent = "ошибка: " + e.message; }
   });
 
@@ -1189,231 +1317,6 @@
       state.bots = d.bots; renderBots(); toast("Боты сохранены");
     } catch (e) { toast("Ошибка ботов: " + e.message, true); }
   });
-
-  // ---------- publications ----------
-  async function loadPublications() {
-    try {
-      var st = $("pub-status").value;
-      var d = await api("/api/publications?limit=5000" + (st ? "&status=" + encodeURIComponent(st) : ""));
-      state.pubs = d.publications || [];
-      var maxTs = "", maxId = 0;
-      state.pubs.forEach(function (p) {
-        var ts = String(p.updated_db || "");
-        if (ts > maxTs || (ts === maxTs && Number(p.id) > maxId)) { maxTs = ts; maxId = Number(p.id) || 0; }
-      });
-      state.pubSyncAt = maxTs; state.pubSyncId = maxId;
-      renderPublications();
-    } catch (e) { toast("Публикации: " + e.message, true); }
-  }
-  function pubBadge(s) {
-    var map = { "new": "info", "analyzed": "warn", "task_created": "ok", "no_task": "", "analysis_error": "bad" };
-    return '<span class="badge ' + (map[s] || "") + '">' + esc(s || "") + "</span>";
-  }
-  function threadLabel(kind) {
-    if (kind === "version") return "версия";
-    if (kind === "task") return "задача";
-    if (kind === "entity") return "сущность";
-    return kind || "";
-  }
-  function actionBadge(p) {
-    if (p.answered_by_version) {
-      var v = p.answer_version_number ? " v" + String(p.answer_version_number).padStart(3, "0") : "";
-      return '<span class="badge ok" title="По комментарию уже выпущена версия">отвечено' + v + '</span>';
-    }
-    if (p.is_mention) return '<span class="badge purple" title="Приоритетное указание для @p.robot">@p.robot</span>';
-    if (p.needs_action === 1) return '<span class="badge bad">продолжение</span>';
-    if (p.needs_action === 0) return '<span class="badge ok">версия</span>';
-    return '<span class="badge warn">не разобрано</span>';
-  }
-  function renderPublications() {
-    var tb = $("pub-table").tBodies[0];
-    tb.innerHTML = "";
-    var ordered = state.pubs.slice().sort(function (a, b) {
-      return (b.is_mention ? 1 : 0) - (a.is_mention ? 1 : 0);
-    });
-    ordered.forEach(function (p) {
-      var tr = document.createElement("tr");
-      tr.dataset.id = p.id;
-      tr.dataset.action = p.needs_action === 1 ? "continuation" : (p.needs_action === 0 ? "version" : "unknown");
-      tr.dataset.answered = p.answered_by_version ? "1" : "0";
-      tr.dataset.mention = p.is_mention ? "1" : "0";
-      tr.dataset.images = (p.attachments || []).length ? "1" : "0";
-      tr.dataset.hay = [p.project_alias, p.shot, p.thread_kind, p.version_number, p.author, p.body].join(" ").toLowerCase();
-      var att = (p.attachments || []).map(function (a) {
-        return '<a class="link" target="_blank" href="' + esc(a.url || ("/files/" + a.file_id)) + '">' + esc(a.name || "file") + "</a>";
-      }).join("<br>");
-      tr.innerHTML =
-        '<td>' + esc(p.project_alias || p.project_id) + "</td>" +
-        '<td><b>' + esc(p.shot || "") + "</b></td>" +
-        '<td>' + esc(threadLabel(p.thread_kind)) + "</td>" +
-        '<td>' + esc(p.version_number ? "v" + String(p.version_number).padStart(3, "0") : "") + "</td>" +
-        '<td>' + esc(p.author || "") + "</td>" +
-        '<td class="wrap" title="' + esc(p.body || "") + '">' + esc((p.body || "").replace(/\n/g, " ").slice(0, 260)) + "</td>" +
-        '<td class="wrap">' + att + "</td>" +
-        '<td>' + pubBadge(p.status) + "</td>" +
-        '<td>' + actionBadge(p) + "</td>" +
-        '<td><button class="btn" data-pub-analyze="' + p.id + '">AI</button> ' +
-        '<button class="btn" data-pub-details="' + p.id + '" title="Открыть план .md">MD</button></td>';
-      tb.appendChild(tr);
-    });
-    RobotTables.refresh($("pub-table"));
-    applyPubFilters();
-    updatePubSelected();
-  }
-  function applyPubFilters() {
-    var q = ($("pub-filter").value || "").trim().toLowerCase();
-    var action = $("pub-action").value;
-    var showNoAction = $("pub-show-noaction").checked;
-    var showAnswered = $("pub-show-answered").checked;
-    Array.prototype.forEach.call($("pub-table").tBodies[0].rows, function (tr) {
-      var ok = true;
-      if (q && (tr.dataset.hay || "").indexOf(q) === -1) ok = false;
-      if (action === "continuation" && tr.dataset.action !== "continuation") ok = false;
-      if (action === "version" && tr.dataset.action !== "version") ok = false;
-      if (action === "unknown" && tr.dataset.action !== "unknown") ok = false;
-      if (action === "answered" && tr.dataset.answered !== "1") ok = false;
-      if (action === "mention" && tr.dataset.mention !== "1") ok = false;
-      if (action === "images" && tr.dataset.images !== "1") ok = false;
-      if (!showNoAction && tr.dataset.action === "version" && tr.dataset.answered !== "1") ok = false;
-      if (!showAnswered && action !== "answered" && tr.dataset.answered === "1") ok = false;
-      tr.style.display = ok ? "" : "none";
-    });
-  }
-  async function pollPublicationChanges() {
-    if (document.hidden || !state.pubSyncAt) return;
-    try {
-      var d = await api("/api/publications/changes?since=" + encodeURIComponent(state.pubSyncAt) +
-                        "&since_id=" + state.pubSyncId + "&limit=1000");
-      var changes = d.publications || [];
-      if (!changes.length) return;
-      var byId = {};
-      state.pubs.forEach(function (p) { byId[p.id] = p; });
-      var newCount = 0;
-      changes.forEach(function (p) {
-        if (!byId[p.id]) newCount += 1;
-        byId[p.id] = p;
-      });
-      var last = changes[changes.length - 1];
-      if (last && last.updated_db) {
-        var ts = String(last.updated_db), id = Number(last.id) || 0;
-        if (ts > state.pubSyncAt || (ts === state.pubSyncAt && id > state.pubSyncId)) {
-          state.pubSyncAt = ts; state.pubSyncId = id;
-        }
-      }
-      state.pubs = Object.keys(byId).map(function (k) { return byId[k]; });
-      state.pubs.sort(function (a, b) {
-        return String(b.created_at || "").localeCompare(String(a.created_at || "")) || (b.id - a.id);
-      });
-      var selected = RobotTables.selected($("pub-table"));
-      renderPublications();
-      if (selected.length && RobotTables.selectIds) RobotTables.selectIds($("pub-table"), selected);
-      updatePubSelected();
-      if (newCount) toast("Новых сообщений synx: " + newCount);
-      try {
-        var meta = await api("/api/meta");
-        $("last-scan").textContent = meta.last_scan ? "scan: " + fmtTime(meta.last_scan) : "scan: ещё не было";
-      } catch (e2) {}
-    } catch (e) { /* silently retry on the next tick */ }
-  }
-  setInterval(pollPublicationChanges, 10000);
-
-  function updatePubSelected() {
-    var sel = RobotTables.selected($("pub-table"));
-    $("pub-selected-count").textContent = sel.length + " выбрано";
-  }
-  $("pub-table").addEventListener("dblclick", function (e) {
-    var tr = e.target.closest("tr[data-id]");
-    if (tr) showPlan(Number(tr.dataset.id));
-  });
-  $("pub-table").addEventListener("robot-selection", updatePubSelected);
-  $("task-table").addEventListener("robot-selection", updateTaskSelected);
-  $("pub-table").addEventListener("click", function (e) {
-    var a = e.target.closest("[data-pub-analyze]");
-    if (a) { analyzeOne(Number(a.dataset.pubAnalyze)); return; }
-    var d = e.target.closest("[data-pub-details]");
-    if (d) { showPlan(Number(d.dataset.pubDetails)); return; }
-    if (e.target.closest("a,button,input")) return;
-    updatePubSelected();
-  });
-  $("pub-filter").addEventListener("input", applyPubFilters);
-  $("pub-action").addEventListener("change", applyPubFilters);
-  $("pub-show-noaction").addEventListener("change", applyPubFilters);
-  $("pub-show-answered").addEventListener("change", applyPubFilters);
-  $("pub-status").addEventListener("change", loadPublications);
-  $("pub-refresh").addEventListener("click", loadPublications);
-  $("pub-reclassify").addEventListener("click", async function () {
-    if (!confirm("Переанализировать всю таблицу публикаций? Версии будут помечены как «просто версия», требующие правок — как «продолжение».")) return;
-    try {
-      var d = await api("/api/publications/reclassify?ai=true", { method: "POST" });
-      toast("Разметка: версий " + d.counts.version + ", продолжений " + d.counts.continuation + ", AI в очереди " + d.ai_queued);
-      await loadPublications();
-    } catch (e) { toast(e.message, true); }
-  });
-  $("pub-analyze-batch").addEventListener("click", async function () {
-    if (!confirm("Поставить в AI-разметку все неразобранные комментарии? Это может занять время и токены.")) return;
-    try {
-      var d = await api("/api/publications/analyze-batch?limit=200", { method: "POST" });
-      toast("В разметку поставлено: " + d.queued);
-    } catch (e) { toast(e.message, true); }
-  });
-
-  async function analyzeOne(id) {
-    toast("AI анализирует комментарий...");
-    try {
-      var d = await api("/api/publications/" + id + "/analyze", { method: "POST" });
-      toast(d.plan && d.plan.needs_task === false ? "AI: задача не нужна" : "AI: план готов");
-      await loadPublications();
-      showPlan(id);
-    } catch (e) { toast("AI: " + e.message, true); }
-  }
-  $("pub-analyze-selected").addEventListener("click", async function () {
-    var sel = RobotTables.selected($("pub-table"));
-    if (!sel.length) return toast("Ничего не выбрано", true);
-    for (var i = 0; i < sel.length; i++) await analyzeOne(sel[i]);
-  });
-  $("pub-create-selected").addEventListener("click", async function () {
-    var sel = RobotTables.selected($("pub-table"));
-    if (!sel.length) return toast("Ничего не выбрано", true);
-    for (var i = 0; i < sel.length; i++) {
-      var pubRow = state.pubs.find(function (x) { return x.id === sel[i]; });
-      if (pubRow && pubRow.answered_by_version) {
-        toast("Публикация " + sel[i] + ": уже отвечена версией — задача не нужна", true);
-        continue;
-      }
-      try {
-        var d = await api("/api/publications/" + sel[i] + "/create-task", { method: "POST", body: "{}" });
-        toast("Задача создана: " + (d.task ? d.task.task_name : ""));
-      } catch (e) { toast("Задача " + sel[i] + ": " + e.message, true); }
-    }
-    await loadPublications();
-    await loadTasks();
-  });
-
-  async function showPlan(id) {
-    var p = state.pubs.find(function (x) { return x.id === id; });
-    if (!p) return;
-    var plan = p.analysis;
-    var md = p.analysis_md || "";
-    var html = "";
-    if (md && window.marked) {
-      html = window.marked.parse(md);
-      if (window.DOMPurify) html = window.DOMPurify.sanitize(html);
-    }
-    var body = md
-      ? '<div class="markdown-body">' + html + '</div>' +
-        '<div class="muted" style="margin-top:10px">Файл: <span class="mono">' + esc(p.analysis_md_path || "") + '</span></div>'
-      : '<div class="pre">План ещё не готов. Нажми «Разобрать».</div>';
-    if (p.answered_by_version) {
-      body += '<div class="muted" style="margin-top:10px">По этому комментарию уже выпущена версия — создание задачи не требуется.</div>';
-    }
-    openModal("План задачи · " + (p.shot || ""), body,
-      plan && !p.answered_by_version ? [{ label: "Создать задачу", primary: true, fn: async function () {
-        try {
-          var d = await api("/api/publications/" + id + "/create-task", { method: "POST", body: "{}" });
-          toast("Задача создана: " + d.task.task_name); closeModal(); await loadPublications(); await loadTasks();
-        } catch (e) { toast(e.message, true); }
-      } }] : []);
-  }
 
   // ---------- tasks ----------
   async function loadTasks() {
@@ -1644,7 +1547,6 @@
     try {
       var d = await api("/api/synx/scan", { method: "POST", body: JSON.stringify({}) });
       toast("Synx: " + d.comments + " комментариев, новых " + d.new);
-      await loadPublications();
       var meta = await api("/api/meta");
       $("last-scan").textContent = "scan: " + fmtTime(meta.last_scan);
     } catch (e) { toast("Scan: " + e.message, true); }
@@ -1780,7 +1682,6 @@
   // ---------- init ----------
   async function init() {
     await loadSettings();
-    await loadPublications();
     await loadTasks();
     await loadChatSessions();
     await loadChat();

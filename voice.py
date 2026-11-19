@@ -135,6 +135,17 @@ class VoiceEngine:
         except Exception:
             pass
 
+    def unload_model(self, model: str | None = None) -> dict[str, Any]:
+        c = self._correct_cfg()
+        name = str(model or c.get("model") or "").strip()
+        if not name:
+            return {"unloaded": []}
+        base = str(c.get("base_url") or "http://127.0.0.1:11434").rstrip("/")
+        r = requests.post(base + "/api/generate", json={
+            "model": name, "keep_alive": 0}, timeout=10)
+        r.raise_for_status()
+        return {"unloaded": [name]}
+
     # --- warm-up --------------------------------------------------------
     def warmup(self) -> None:
         """Preload models and run a dummy inference in the background."""
@@ -320,6 +331,7 @@ class VoiceEngine:
         payload = {
             "model": model,
             "stream": False,
+            "think": False,
             "keep_alive": str(c.get("keep_alive") or "5m"),
             "options": {
                 "temperature": float(c.get("temperature", 0)),
@@ -397,6 +409,7 @@ class VoiceEngine:
                 requests.post(base + "/api/chat", json={
                     "model": str(c.get("model") or "qwen2.5:7b-instruct-q4_K_M"),
                     "stream": False,
+                    "think": False,
                     "keep_alive": str(c.get("keep_alive") or "5m"),
                     "messages": [{"role": "user", "content": "ok"}],
                     "options": {"temperature": 0, "num_predict": 1},
