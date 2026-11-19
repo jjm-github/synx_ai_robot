@@ -524,6 +524,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 /* Voice input: hold to talk */
 .voice-btn.hidden { display: none; }
+.voice-btn { width: 96px; min-width: 96px; max-width: 96px; height: 36px;
+  padding: 0 8px; box-sizing: border-box; display: inline-flex;
+  align-items: center; justify-content: center; white-space: nowrap; }
 .voice-toggle { font-size: 12px; }
 .voice-btn.recording { background: #3b82f6; border-color: #3b82f6; color: #fff; }
 .voice-btn.thinking { background: #f5c542; border-color: #e0b12f; color: #241c00; animation: voice-blink 0.5s ease-in-out infinite; }
