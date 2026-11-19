@@ -182,6 +182,162 @@
       b.addEventListener("click", function () { chatAttachments.splice(Number(b.dataset.chip), 1); renderChatChips(); });
     });
   }
+  function insertIntoChatInput(text) {
+    if (!text) return;
+    var ta = $("chat-input");
+    var val = ta.value;
+    var start = ta.selectionStart != null ? ta.selectionStart : val.length;
+    var end = ta.selectionEnd != null ? ta.selectionEnd : val.length;
+    if (document.activeElement !== ta) { start = end = val.length; }
+    var before = val.slice(0, start), after = val.slice(end);
+    var sep1 = before && !/\s$/.test(before) ? "\n\n" : "";
+    var sep2 = after && !/^\s/.test(after) ? "\n" : "";
+    var ins = sep1 + text + sep2;
+    ta.value = before + ins + after;
+    var pos = (before + ins).length;
+    ta.focus();
+    ta.setSelectionRange(pos, pos);
+    ta.dispatchEvent(new Event("input", {bubbles: true}));
+    toast("Текст добавлен в запрос");
+  }
+
+  // Drag selected text into the composer; the caret shows the exact spot.
+  var chatDrag = {text: "", mirror: null, offset: 0};
+  function buildMirror(ta) {
+    if (chatDrag.mirror) chatDrag.mirror.remove();
+    var cs = getComputedStyle(ta);
+    var m = document.createElement("div");
+    m.style.cssText = "position:fixed;left:-9999px;top:0;visibility:hidden;pointer-events:none;z-index:-1;";
+    m.style.width = Math.max(40, ta.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)) + "px";
+    ["fontFamily", "fontSize", "fontWeight", "fontStyle", "letterSpacing", "lineHeight",
+     "textTransform", "textAlign", "wordSpacing", "tabSize", "overflowWrap", "wordBreak"
+    ].forEach(function (k) { m.style[k] = cs[k]; });
+    m.style.whiteSpace = "pre-wrap";
+    m.style.padding = "0";
+    m.style.border = "0";
+    document.body.appendChild(m);
+    chatDrag.mirror = m;
+    return m;
+  }
+  function caretFromPoint(ta, clientX, clientY) {
+    var text = ta.value;
+    var m = buildMirror(ta);
+    var before = document.createTextNode(""), span = document.createElement("span"),
+        after = document.createTextNode("");
+    span.textContent = "\u200b";
+    m.appendChild(before); m.appendChild(span); m.appendChild(after);
+    var mrect = m.getBoundingClientRect();
+    var trect = ta.getBoundingClientRect();
+    var tx = clientX - trect.left;
+    var ty = clientY - trect.top + ta.scrollTop;
+    var best = 0, bestD = Infinity, bestRect = null;
+    var step = text.length > 4000 ? Math.ceil(text.length / 4000) : 1;
+    for (var i = 0; i <= text.length; i += step) {
+      before.data = text.slice(0, i);
+      after.data = text.slice(i);
+      var r = span.getBoundingClientRect();
+      var dx = r.left - mrect.left, dy = r.top - mrect.top;
+      var d = Math.abs(dy - ty) * 8 + Math.abs(dx - tx);
+      if (d < bestD) { bestD = d; best = i; bestRect = r; }
+    }
+    return {offset: best, rect: bestRect, trect: trect};
+  }
+  function showDropCaret(rect) {
+    var comp = $("chat-composer"), marker = $("drop-caret");
+    var cs = getComputedStyle($("chat-input"));
+    if (!rect) { marker.classList.add("hidden"); return; }
+    var cr = comp.getBoundingClientRect();
+    var lh = parseFloat(cs.lineHeight) || 18;
+    marker.style.left = (rect.left - cr.left) + "px";
+    marker.style.top = (rect.top - cr.top) + "px";
+    marker.style.height = lh + "px";
+    marker.classList.remove("hidden");
+  }
+  function hideDropCaret() {
+    $("drop-caret").classList.add("hidden");
+    $("chat-composer").classList.remove("drop-active");
+    if (chatDrag.mirror) { chatDrag.mirror.remove(); chatDrag.mirror = null; }
+  }
+  $("chat-messages").addEventListener("dragstart", function (e) {
+    var sel = selectedText();
+    if (!sel) return;
+    chatDrag.text = sel;
+    try {
+      e.dataTransfer.setData("text/plain", sel);
+      e.dataTransfer.effectAllowed = "copy";
+    } catch (err) { /* ignore */ }
+    $("chat-composer").classList.add("drop-active");
+  });
+  $("chat-composer").addEventListener("dragover", function (e) {
+    var hasText = chatDrag.text || (e.dataTransfer &&
+      Array.from(e.dataTransfer.types || []).indexOf("text/plain") >= 0);
+    if (!hasText) return;
+    e.preventDefault();
+    var ta = $("chat-input"), r = ta.getBoundingClientRect();
+    var over = e.clientX >= r.left && e.clientX <= r.right &&
+               e.clientY >= r.top && e.clientY <= r.bottom;
+    if (over) {
+      var res = caretFromPoint(ta, e.clientX, e.clientY);
+      chatDrag.offset = res.offset;
+      showDropCaret(res.rect);
+    } else {
+      chatDrag.offset = ta.value.length;
+      showDropCaret(null);
+    }
+    $("chat-composer").classList.add("drop-active");
+  });
+  $("chat-composer").addEventListener("dragleave", function (e) {
+    if (e.target === $("chat-composer")) hideDropCaret();
+  });
+  $("chat-composer").addEventListener("drop", function (e) {
+    e.preventDefault();
+    var text = chatDrag.text || (e.dataTransfer && e.dataTransfer.getData("text/plain")) || "";
+    var offset = chatDrag.offset;
+    hideDropCaret();
+    if (!text) return;
+    var ta = $("chat-input"), val = ta.value;
+    if (offset == null || offset < 0 || offset > val.length) offset = val.length;
+    var before = val.slice(0, offset), after = val.slice(offset);
+    var sep1 = before && !/\s$/.test(before) ? "\n\n" : "";
+    var sep2 = after && !/^\s/.test(after) ? "\n" : "";
+    var ins = sep1 + text + sep2;
+    ta.value = before + ins + after;
+    var pos = (before + ins).length;
+    ta.focus();
+    ta.setSelectionRange(pos, pos);
+    ta.dispatchEvent(new Event("input", {bubbles: true}));
+    chatDrag.text = "";
+  });
+  document.addEventListener("dragend", function () { chatDrag.text = ""; hideDropCaret(); });
+
+  // Clipboard images while the mouse is over the chat.
+  var chatHover = false;
+  $("view-chat").addEventListener("mouseenter", function () { chatHover = true; });
+  $("view-chat").addEventListener("mouseleave", function () { chatHover = false; });
+  async function uploadChatImage(file) {
+    var fd = new FormData();
+    fd.append("file", file);
+    var r = await fetch("/api/chat/upload", { method: "POST", body: fd });
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.detail || "upload failed");
+    return d;
+  }
+  document.addEventListener("paste", async function (e) {
+    if (!chatHover) return;
+    var items = Array.from((e.clipboardData || {}).items || []);
+    var files = items.filter(function (it) { return it.type && it.type.indexOf("image/") === 0; })
+      .map(function (it) { return it.getAsFile(); }).filter(Boolean);
+    if (!files.length) return;
+    e.preventDefault();
+    for (var i = 0; i < files.length; i++) {
+      try { chatAttachments.push(await uploadChatImage(files[i])); }
+      catch (err) { toast("Вставка: " + err.message, true); }
+    }
+    renderChatChips();
+    $("chat-input").focus();
+    toast("Картинка вставлена в запрос");
+  });
+
   $("chat-files").addEventListener("change", async function () {
     var files = Array.from(this.files || []); this.value = "";
     for (var i = 0; i < files.length; i++) {
@@ -409,6 +565,11 @@
     var items = [];
     var selected = selectedText();
     if (selected) {
+      items.push({label: "Вставить в запрос", fn: function () { insertIntoChatInput(selected); }});
+      items.push({label: "Вставить в запрос как цитату", fn: function () {
+        insertIntoChatInput(selected.split("\n").map(function (line) { return "> " + line; }).join("\n"));
+      }});
+      items.push({sep: true});
       items.push({label: "Копировать выделенное", fn: function () { copyText(selected); }});
       items.push({label: "Копировать выделенное как цитату", fn: function () {
         copyText(selected.split("\n").map(function (line) { return "> " + line; }).join("\n"));
