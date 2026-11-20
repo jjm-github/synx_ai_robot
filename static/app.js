@@ -210,6 +210,7 @@
       var d = await api("/api/chat/messages?session_id=" + encodeURIComponent(chatSession));
       renderChatMessages(d.messages || []);
     } catch (e) { toast("Чат: " + e.message, true); }
+    renderThinkingForCurrent();
   }
   function renderChatChips() {
     var box = $("chat-chips"); box.innerHTML = "";
@@ -441,120 +442,167 @@
       '<div class="thinking-row"><span class="thinking-dots"><i></i><i></i><i></i></span><span id="thinking-text">Анализирую запрос...</span></div>' +
       '<div class="job-log" id="job-log"><div class="job-log-head"><span>Действие</span><span>вход</span><span>выход</span></div></div>' +
       '<div class="job-images" id="job-images"></div>' +
-      '<div class="thinking-footer"><button class="btn danger hidden" id="chat-stop" title="Прервать текущий ответ (Esc)">■ Стоп</button></div>' +
+      '<div class="thinking-footer"><button class="btn danger hidden" id="chat-stop" title="Остановить ответ">■ Стоп</button></div>' +
       '</div>';
     var stop = wrap.querySelector("#chat-stop");
     if (stop) stop.addEventListener("click", stopChatJob);
     box.appendChild(wrap); box.scrollTop = box.scrollHeight;
     return wrap;
   }
-  var activeChatJob = null;
+  var chatJobs = {};
+  function currentChatJob() { return chatJobs[chatSession] || null; }
   function setChatRunning(on) {
-    $("chat-send").disabled = on;
+    $("chat-send").disabled = !!on;
     $("chat-send").textContent = on ? "Думаю..." : "Отправить";
     var stop = $("chat-stop");
     if (stop) stop.classList.toggle("hidden", !on);
   }
+  function syncChatUi() {
+    var job = currentChatJob();
+    setChatRunning(!!job && job.status !== "done");
+  }
+  function fmtJobTokens(n) {
+    return Number(n || 0).toLocaleString("ru-RU");
+  }
+  function applyJobEvent(evt, state) {
+    var th = $("thinking-text"); if (th && evt.text) th.textContent = evt.text;
+    if (evt.type === "stage") {
+      var log = $("job-log");
+      if (log) {
+        var line = document.createElement("div");
+        line.className = "job-log-line";
+        var txt = document.createElement("span");
+        txt.className = "job-log-text";
+        txt.textContent = "• " + (evt.text || "");
+        var tin = document.createElement("span");
+        tin.className = "job-log-in";
+        var tout = document.createElement("span");
+        tout.className = "job-log-out";
+        line.appendChild(txt); line.appendChild(tin); line.appendChild(tout);
+        log.appendChild(line);
+        if (evt.step) state.stepLines[evt.step] = {in: tin, out: tout};
+      }
+    }
+    if (evt.type === "step_usage") {
+      var tk = state.stepLines[evt.step];
+      if (!tk) {
+        var log2 = $("job-log");
+        if (log2) {
+          var l2 = document.createElement("div"); l2.className = "job-log-line";
+          var t2 = document.createElement("span"); t2.className = "job-log-text";
+          t2.textContent = "• Шаг " + evt.step;
+          tk = {in: document.createElement("span"), out: document.createElement("span")};
+          tk.in.className = "job-log-in"; tk.out.className = "job-log-out";
+          l2.appendChild(t2); l2.appendChild(tk.in); l2.appendChild(tk.out);
+          log2.appendChild(l2);
+          state.stepLines[evt.step] = tk;
+        }
+      }
+      if (tk) {
+        tk.in.textContent = fmtJobTokens(evt.input);
+        tk.out.textContent = fmtJobTokens(evt.output);
+      }
+    }
+    if (evt.type === "image" && evt.image) {
+      var jb = $("job-images");
+      if (jb) {
+        var im = document.createElement("img");
+        im.src = evt.image.url; im.dataset.chatImage = "1";
+        im.dataset.title = evt.image.name || "image"; im.alt = "";
+        jb.appendChild(im);
+      }
+    }
+  }
+  function renderJobEvents(job) {
+    var log = $("job-log");
+    if (!log) return;
+    log.innerHTML = '<div class="job-log-head"><span>Действие</span><span>вход</span><span>выход</span></div>';
+    var jb = $("job-images"); if (jb) jb.innerHTML = "";
+    var state = {stepLines: {}};
+    (job.events || []).forEach(function (evt) { applyJobEvent(evt, state); });
+    var box = $("chat-messages"); if (box) box.scrollTop = box.scrollHeight;
+  }
+  function renderThinkingForCurrent() {
+    var old = $("chat-thinking"); if (old) old.remove();
+    var job = currentChatJob();
+    if (!job || job.status === "done") { setChatRunning(false); return; }
+    appendThinkingBubble();
+    renderJobEvents(job);
+    setChatRunning(true);
+  }
   async function stopChatJob() {
-    if (!activeChatJob) return;
+    var job = currentChatJob();
+    if (!job || !job.id) return;
     var th = $("thinking-text"); if (th) th.textContent = "Прерываю...";
-    try { await api("/api/chat/jobs/" + encodeURIComponent(activeChatJob) + "/stop", { method: "POST" }); }
+    try { await api("/api/chat/jobs/" + encodeURIComponent(job.id) + "/stop", { method: "POST" }); }
     catch (e) { toast("Стоп: " + e.message, true); }
   }
-  async function pollChatJob(jobId) {
-    var seen = 0;
-    var stepLines = {};
-    function fmtTokens(n) {
-      return Number(n || 0).toLocaleString("ru-RU");
-    }
+  async function pollChatJob(jobId, sid) {
+    var job = chatJobs[sid];
+    if (!job) return;
     for (;;) {
       var d;
       try { d = await api("/api/chat/jobs/" + encodeURIComponent(jobId)); }
-      catch (e) { toast("Чат: " + e.message, true); break; }
+      catch (e) {
+        if (chatSession === sid) toast("Чат: " + e.message, true);
+        job.status = "error";
+        break;
+      }
+      var changed = false;
       (d.events || []).forEach(function (evt) {
-        if ((evt.seq || 0) <= seen) return;
-        seen = evt.seq || seen;
-        var th = $("thinking-text"); if (th && evt.text) th.textContent = evt.text;
-        if (evt.type === "stage") {
-          var log = $("job-log");
-          if (log) {
-            var line = document.createElement("div");
-            line.className = "job-log-line";
-            var txt = document.createElement("span");
-            txt.className = "job-log-text";
-            txt.textContent = "• " + evt.text;
-            var tin = document.createElement("span");
-            tin.className = "job-log-in";
-            var tout = document.createElement("span");
-            tout.className = "job-log-out";
-            line.appendChild(txt);
-            line.appendChild(tin);
-            line.appendChild(tout);
-            log.appendChild(line);
-            if (evt.step) stepLines[evt.step] = {in: tin, out: tout};
-          }
-        }
-        if (evt.type === "step_usage") {
-          var tk = stepLines[evt.step];
-          if (!tk) {
-            var log2 = $("job-log");
-            if (log2) {
-              var l2 = document.createElement("div"); l2.className = "job-log-line";
-              var t2 = document.createElement("span"); t2.className = "job-log-text";
-              t2.textContent = "• Шаг " + evt.step;
-              tk = {in: document.createElement("span"), out: document.createElement("span")};
-              tk.in.className = "job-log-in"; tk.out.className = "job-log-out";
-              l2.appendChild(t2); l2.appendChild(tk.in); l2.appendChild(tk.out);
-              log2.appendChild(l2);
-              stepLines[evt.step] = tk;
-            }
-          }
-          if (tk) {
-            tk.in.textContent = fmtTokens(evt.input);
-            tk.out.textContent = fmtTokens(evt.output);
-          }
-        }
-        if (evt.type === "image" && evt.image) {
-          var jb = $("job-images");
-          if (jb) { var im = document.createElement("img"); im.src = evt.image.url; im.dataset.chatImage = "1"; im.dataset.title = evt.image.name || "image"; im.alt = ""; jb.appendChild(im); }
-        }
-        var box = $("chat-messages"); if (box) box.scrollTop = box.scrollHeight;
+        if ((evt.seq || 0) <= job.seen) return;
+        job.seen = evt.seq || job.seen;
+        job.events.push(evt);
+        changed = true;
       });
-      if (d.status === "done") break;
-      if (d.status === "cancelled") { toast("Прервано"); break; }
-      if (d.status === "error") { toast("Ошибка чата: " + (d.error || ""), true); break; }
+      if (changed && chatSession === sid) {
+        if (!$("chat-thinking")) renderThinkingForCurrent();
+        else renderJobEvents(job);
+      }
+      if (d.status === "done") { job.status = "done"; break; }
+      if (d.status === "cancelled") { job.status = "cancelled"; break; }
+      if (d.status === "error") { job.status = "error"; if (chatSession === sid) toast("Ошибка чата: " + (d.error || ""), true); break; }
       await new Promise(function (r) { setTimeout(r, 800); });
     }
-    activeChatJob = null;
-    var th = $("chat-thinking"); if (th) th.remove();
-    setChatRunning(false);
-    await loadChatSessions(chatSession);
-    await loadChat();
+    var wasCurrent = chatSession === sid;
+    if (wasCurrent) {
+      delete chatJobs[sid];
+      var th = $("chat-thinking"); if (th) th.remove();
+      setChatRunning(false);
+      await loadChatSessions(chatSession);
+      await loadChat();
+    } else {
+      delete chatJobs[sid];
+    }
   }
   async function sendChat() {
+    var sid = chatSession;
+    if (chatJobs[sid]) return;
     var text = $("chat-input").value.trim();
     if (!text && !chatAttachments.length) return;
     var images = chatAttachments.slice();
-    var payload = { session_id: chatSession, text: text, images: images };
+    var payload = { session_id: sid, text: text, images: images };
     chatAttachments = []; renderChatChips(); $("chat-input").value = "";
     appendUserBubble(text, images);
+    var job = {id: null, events: [], seen: 0, status: "starting"};
+    chatJobs[sid] = job;
     appendThinkingBubble();
     setChatRunning(true);
     try {
       var d = await api("/api/chat/send", { method: "POST", body: JSON.stringify(payload) });
-      activeChatJob = d.job_id;
-      await pollChatJob(d.job_id);
+      job.id = d.job_id;
+      job.status = "running";
+      await pollChatJob(d.job_id, sid);
     } catch (e) {
-      var th = $("chat-thinking"); if (th) th.remove();
-      toast("Чат: " + e.message, true);
-      await loadChat();
-      setChatRunning(false);
-      activeChatJob = null;
+      delete chatJobs[sid];
+      if (chatSession === sid) {
+        var th = $("chat-thinking"); if (th) th.remove();
+        toast("Чат: " + e.message, true);
+        await loadChat();
+        setChatRunning(false);
+      }
     }
   }
-  document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && activeChatJob) { e.preventDefault(); stopChatJob(); }
-  });
   // ---------- local voice input (hold to talk) ----------
   var voiceState = {enabled: false, recording: false, thinking: false,
                     polling: null, before: "", after: "", dotTimer: null, dotIndex: 0};
@@ -717,6 +765,7 @@
   $("chat-folders").addEventListener("click", openFoldersModal);
   $("chat-session").addEventListener("change", function () {
     chatSession = this.value;
+    syncChatUi();
     loadChat();
   });
   $("chat-new").addEventListener("click", async function () {
