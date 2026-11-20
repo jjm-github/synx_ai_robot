@@ -707,3 +707,106 @@ def make_playlist(project: str, date_from: str | None = None,
     return {"project": data["project"], "from": data["from"], "to": data["to"],
             "count": len(items), "text": text,
             "items": [{"entity": i["entity"], "version": i["version"], "file": i["file"]} for i in items]}
+
+
+SHOT_LINKS_RE = re.compile(r"\n*СВЯЗАННЫЕ АССЕТЫ:.*\Z", re.S)
+
+
+def _shot_links_block(assets: list[dict[str, Any]]) -> str:
+    groups: dict[str, list[str]] = {"локация": [], "персонажи": [], "предметы": []}
+    for a in assets:
+        name = str(a.get("name") or "")
+        if name.startswith("loc_"):
+            groups["локация"].append(name)
+        elif name.startswith("chr_"):
+            groups["персонажи"].append(name)
+        elif name.startswith("obj_"):
+            groups["предметы"].append(name)
+    parts = []
+    for key in ("локация", "персонажи", "предметы"):
+        if groups[key]:
+            parts.append(f"{key} — {', '.join(sorted(groups[key]))}")
+    return "СВЯЗАННЫЕ АССЕТЫ: " + "; ".join(parts) if parts else ""
+
+
+def list_shots(project: str, sequence: str | None = None,
+               with_info: bool = False) -> dict[str, Any]:
+    c = client()
+    p = _project(c, project)
+    seq = str(sequence or "").strip()
+    out = []
+    for e in sorted((x for x in c.entities(p["id"]) if x.get("entity_kind") == "shot"),
+                    key=lambda x: x.get("name") or ""):
+        if seq and (e.get("sequence_name") or "") != seq:
+            continue
+        row = {"name": e.get("name"), "sequence": e.get("sequence_name"),
+               "linked_assets": [a.get("name") for a in (e.get("linked_assets") or [])]}
+        if with_info:
+            row["info"] = e.get("info") or ""
+        out.append(row)
+    return {"ok": True, "project": p.get("alias"), "count": len(out), "shots": out}
+
+
+def link_shot_assets(project: str, mapping: dict[str, list[str]], *,
+                     append_info: bool = True,
+                     bidirectional: bool = False,
+                     replace: bool = True) -> dict[str, Any]:
+    """Bulk-set linked assets for shots and append the block to shot info.
+
+    mapping: {"s001_0010": ["loc_central_hall_argus", "chr_elara_vasquez", ...]}
+    """
+    if not isinstance(mapping, dict) or not mapping:
+        raise ValueError("mapping must be a non-empty object: shot -> [asset names]")
+    c = client()
+    p = _project(c, project)
+    ents = c.entities(p["id"])
+    by_name = {str(e.get("name") or "").lower(): e for e in ents}
+    updated = info_updated = 0
+    errors: list[dict[str, str]] = []
+    for shot_name, raw in mapping.items():
+        shot = by_name.get(str(shot_name).lower())
+        if not shot or shot.get("entity_kind") != "shot":
+            errors.append({"shot": str(shot_name), "error": "shot not found"})
+            continue
+        names = raw if isinstance(raw, list) else re.split(r"[,;\s]+", str(raw or ""))
+        targets = []
+        missing = []
+        for n in names:
+            n = str(n).strip()
+            if not n:
+                continue
+            a = by_name.get(n.lower())
+            if not a or a.get("entity_kind") == "shot":
+                missing.append(n)
+            elif a["id"] != shot["id"]:
+                targets.append(a)
+        if missing:
+            errors.append({"shot": shot["name"], "error": "assets not found: " + ", ".join(missing)})
+            continue
+        ids = list(dict.fromkeys(a["id"] for a in targets))
+        try:
+            if replace:
+                c.update_entity(shot["id"], {"linked_asset_ids": ids})
+            else:
+                cur = list(shot.get("linked_asset_ids") or [])
+                c.update_entity(shot["id"], {"linked_asset_ids": list(dict.fromkeys(cur + ids))})
+            updated += 1
+            if append_info:
+                block = _shot_links_block(targets)
+                info = SHOT_LINKS_RE.sub("", shot.get("info") or "").rstrip()
+                new_info = (info + "\n\n" + block).strip() if block else info
+                if new_info != (shot.get("info") or ""):
+                    c.update_entity(shot["id"], {"info": new_info})
+                    info_updated += 1
+            if bidirectional:
+                for a in targets:
+                    cur = list(a.get("linked_asset_ids") or [])
+                    if shot["id"] not in cur:
+                        try:
+                            c.update_entity(a["id"], {"linked_asset_ids": cur + [shot["id"]]})
+                        except Exception:
+                            pass
+        except Exception as exc:
+            errors.append({"shot": shot["name"], "error": str(exc)[:200]})
+    return {"ok": not errors, "project": p.get("alias"), "updated": updated,
+            "info_updated": info_updated, "errors": errors}

@@ -173,6 +173,13 @@ PDF на стандартных страницах, проверит его и �
   локация → все её объекты и персонажи, каждый объект/персонаж → все его
   локации. Объект, который встречается в нескольких локациях, линкуй ко всем.
   Проверяй, что `linked_assets` не пуст.
+- СВЯЗИ ШОТОВ: у каждого шота должны быть `linked_assets` — локация + только те
+  персонажи и предметы, которые реально видны в кадре (голос за кадром не
+  считается). Определяй по `info` шота и сценарию: читай `synx_shots` с
+  `with_info=true`, сопоставляй названия ассетов, затем вызывай
+  `synx_link_shot_assets` с картой `{шот: [имена ассетов]}`. Инструмент сам
+  заменит связи и допишет в `info` блок `СВЯЗАННЫЕ АССЕТЫ: локация — …;
+  персонажи — …; предметы — …`. После прохода проверь, что пустых связей нет.
 - Удаление сущностей — только по явной просьбе («удали ассет/шот X», «удали все
   ассеты, что создал робот»). Сначала найди и покажи список (id, имя, тип,
   версии/задачи), затем вызывай `synx_delete_entity`. Непустые сущности
@@ -661,6 +668,37 @@ SYNX_TOOLS = [
                 "bidirectional": {"type": "boolean", "default": True},
                 "replace": {"type": "boolean", "default": False},
             }, "required": ["project", "entity", "linked"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "synx_shots",
+            "description": ("List shots of a project with their sequence and current linked "
+                            "assets. Use with_info=true when deciding which assets belong to a "
+                            "shot from its ТЗ."),
+            "parameters": {"type": "object", "properties": {
+                "project": {"type": "string"},
+                "sequence": {"type": "string", "description": "Optional sequence, e.g. s001"},
+                "with_info": {"type": "boolean", "default": False},
+            }, "required": ["project"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "synx_link_shot_assets",
+            "description": ("Bulk-set linked assets for shots and append a "
+                            "«СВЯЗАННЫЕ АССЕТЫ: локация — …; персонажи — …; предметы — …» "
+                            "block to each shot's info. mapping = {shot: [asset names]}. "
+                            "Use for «проставь связанные ассеты во всех шотах»."),
+            "parameters": {"type": "object", "properties": {
+                "project": {"type": "string"},
+                "mapping": {"type": "object", "description": "shot name -> array of asset names"},
+                "append_info": {"type": "boolean", "default": True},
+                "bidirectional": {"type": "boolean", "default": False},
+                "replace": {"type": "boolean", "default": True},
+            }, "required": ["project", "mapping"]},
         },
     },
     {
@@ -2543,6 +2581,22 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
                 list(args.get("linked") or []),
                 bool(args.get("bidirectional", True)),
                 bool(args.get("replace", False))), [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
+    if name == "synx_shots":
+        try:
+            return synx_tools.list_shots(args.get("project") or "",
+                                         args.get("sequence"),
+                                         bool(args.get("with_info", False))), [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
+    if name == "synx_link_shot_assets":
+        try:
+            return synx_tools.link_shot_assets(
+                args.get("project") or "", args.get("mapping") or {},
+                append_info=bool(args.get("append_info", True)),
+                bidirectional=bool(args.get("bidirectional", False)),
+                replace=bool(args.get("replace", True))), [], None
         except Exception as exc:
             return {"error": str(exc)}, [], None
     if name == "synx_update_entity":
