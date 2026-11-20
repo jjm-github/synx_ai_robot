@@ -127,6 +127,11 @@ PDF на стандартных страницах, проверит его и �
 достаточно — переходи к генерации или отвечай текстом. Для списков версий
 используй shot/version фильтры и limit не больше 50.
 
+- Если в сообщении есть задача (создай, сгенерируй, собери, сделай, назначь,
+  выложи PDF/PNG), сначала выполняй её инструментами. Слова «покажи результат»
+  в конце такого сообщения — часть задачи, а не команда показать старую картинку.
+  Не отвечай «нет сгенерированных картинок» вместо выполнения задачи.
+
 ## Фокус и публикация
 
 - Работай только с тем шотом/версией, который назван в текущем сообщении или
@@ -1566,11 +1571,22 @@ def _news_request(text: str) -> dict[str, Any] | None:
 
 
 def _show_request(text: str) -> str | None:
-    """"покажи картинку" / "покажи исходник" — return 'last' or 'source'."""
-    low = (text or "").lower()
-    if not re.search(r"(покажи|показать|выведи|открой)", low):
+    """"покажи картинку" / "покажи исходник" — return 'last' or 'source'.
+
+    This shortcut must only handle a SHORT, self-contained show request. A
+    longer instruction that merely ends with "покажи результат" must go to the
+    normal AI/tool pipeline, otherwise the whole task is swallowed.
+    """
+    low = (text or "").strip().lower()
+    if not low or len(low) > 220 or len(low.split()) > 30:
         return None
-    if re.search(r"(нарисуй|сгенерир|сделай\s+(?:мне\s+)?(?:картинк|изображени|кадр))", low):
+    # The show verb must be the leading intent, not a word inside a task.
+    if not re.match(r"^(?:а\s+|ну\s+|можно\s+|можешь\s+)?"
+                    r"(покажи|показать|выведи|открой|где)\b", low):
+        return None
+    # Any task/action wording means this is not a pure "show" request.
+    if re.search(r"(созда|сдела|сгенер|задач|назнач|промпт|коммент|вылож|"
+                 r"опублик|нарису|концепт|реф|секвенц|эпизод|прогон|проход)", low):
         return None
     if re.search(r"(исходник|референс|оригинал|source|reference)", low):
         return "source"
