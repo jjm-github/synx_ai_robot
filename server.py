@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -97,6 +97,11 @@ class VoiceModelBody(BaseModel):
 
 class UiZoomBody(BaseModel):
     zoom: float = 1.0
+
+
+class UiThemeBody(BaseModel):
+    id: str = ""
+    colors: dict[str, str] = {}
 
 
 class ChatSessionBody(BaseModel):
@@ -317,6 +322,27 @@ def ui_zoom_set(body: UiZoomBody):
     return {"zoom": zoom}
 
 
+@app.get("/api/ui/theme")
+def ui_theme_get():
+    try:
+        return json.loads((DATA_DIR / "ui_theme.json").read_text(encoding="utf-8"))
+    except Exception:
+        return {"id": "", "colors": {}}
+
+
+@app.post("/api/ui/theme")
+def ui_theme_set(body: UiThemeBody):
+    colors = {}
+    for key in ("bg", "field", "text", "sel"):
+        value = str((body.colors or {}).get(key) or "").strip()
+        if re.fullmatch(r"#[0-9a-fA-F]{6}", value):
+            colors[key] = value
+    data = {"id": str(body.id or "")[:80], "colors": colors}
+    (DATA_DIR / "ui_theme.json").write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return data
+
+
 @app.on_event("startup")
 def _startup():
     global _scanner_thread, _event_thread
@@ -330,7 +356,25 @@ def _startup():
 
 @app.get("/")
 def index():
-    return FileResponse(ROOT / "static" / "index.html")
+    html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+    state: dict[str, Any] = {}
+    try:
+        theme = json.loads((DATA_DIR / "ui_theme.json").read_text(encoding="utf-8"))
+    except Exception:
+        theme = {}
+    theme_id = str(theme.get("id") or "").strip()
+    if theme_id:
+        state["theme"] = theme_id
+    colors = theme.get("colors") or {}
+    keys = ("bg", "field", "text", "sel")
+    if all(re.fullmatch(r"#[0-9a-fA-F]{6}", str(colors.get(k) or "")) for k in keys):
+        state["theme_colors"] = ",".join(str(colors[k]) for k in keys)
+    inject = ("<script>window.SYNX_UI_STATE = "
+              + json.dumps(state, ensure_ascii=False) + ";</script>\n  ")
+    html = html.replace('<script src="/static/theme.js"></script>',
+                        inject + '<script src="/static/theme.js"></script>', 1)
+    return HTMLResponse(html, headers={
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
 @app.get("/api/health")

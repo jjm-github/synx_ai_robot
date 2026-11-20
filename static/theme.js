@@ -304,12 +304,10 @@
     function customCookie() { return "synx_theme4_" + uid(); }
 
     function readCustom() {
-        var raw = cookie(customCookie()) || lsGet(customCookie());
-        if (!raw) {
-            /* куки этого браузера нет — берём цвета из профиля на сервере */
-            var saved = global.SYNX_UI_STATE || {};
-            raw = saved.theme_colors || "";
-        }
+        /* Server state is authoritative: it survives WebKit without
+           localStorage and is written on every theme change. */
+        var saved = global.SYNX_UI_STATE || {};
+        var raw = saved.theme_colors || cookie(customCookie()) || lsGet(customCookie());
         if (!raw) return null;
         var parts = raw.split(",");
         if (parts.length !== 4) return null;
@@ -323,12 +321,12 @@
     }
 
     function currentThemeId() {
-        var id = cookie(themeCookie()) || lsGet(themeCookie());
-        if (id && themeById(id)) return id;
-        /* в этом браузере куки нет, но тема сохранена в профиле на сервере
-           (вход с другого браузера) — открываемся сразу в ней */
+        /* Server-injected state first; cookies are only a fallback for browsers
+           where the backend is not available. */
         var saved = global.SYNX_UI_STATE || {};
         if (saved.theme && themeById(saved.theme)) return saved.theme;
+        var id = cookie(themeCookie()) || lsGet(themeCookie());
+        if (id && themeById(id)) return id;
         if (global.SYNX_THEME_DEFAULT && themeById(global.SYNX_THEME_DEFAULT)) {
             return global.SYNX_THEME_DEFAULT;
         }
@@ -399,10 +397,27 @@
     /* Тема хранится и на сервере (users.ui_state): куки свои у каждого
        браузера, а при входе с нового login_action ставит их из профиля. */
     function saveThemeToServer(id, colors) {
-        /* local app: persistence is localStorage + cookie, no server theme API */
         try {
             lsSet(themeCookie(), id);
             lsSet("synx.robot.theme", id);
+        } catch (e) {}
+        try {
+            var c = colors || (id === "custom"
+                ? (readCustom() || DEFAULT_COLORS)
+                : (themeById(id) || themeById("light")).colors);
+            var st = global.SYNX_UI_STATE = global.SYNX_UI_STATE || {};
+            st.theme = id;
+            if (id === "custom" && c) {
+                st.theme_colors = KEYS.map(function (k) { return c[k]; }).join(",");
+            }
+            fetch("/api/ui/theme", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({
+                    id: id,
+                    colors: {bg: c.bg, field: c.field, text: c.text, sel: c.sel}
+                })
+            }).catch(function () {});
         } catch (e) {}
     }
 
@@ -488,7 +503,7 @@
     function selectTheme(id) {
         var colors = id === "custom" ? (readCustom() || DEFAULT_COLORS)
             : (themeById(id) || themeById("light")).colors;
-        saveTheme(id, id === "custom" ? colors : null);
+        saveTheme(id, colors);
         applyColors(colors);
         document.documentElement.setAttribute("data-theme-id", id);
     }

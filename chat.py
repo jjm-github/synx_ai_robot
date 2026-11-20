@@ -52,7 +52,11 @@ CHAT_SYSTEM = """Ты — ассистент IIRobot. Отвечай по-рус
 - ходить в synx по API с данными из настроек приложения;
 - находить конкретную версию по проекту, шоту и коду версии;
 - генерировать изображения в локальном ComfyUI, в том числе из кадра версии;
-- собирать плейлист Synx из опубликованных версий за период.
+- собирать плейлист Synx из опубликованных версий за период;
+- работать с shell и GUI этой машины: запускать команды (`run_shell`), открывать
+  URL в браузере (`open_url`), запускать ComfyUI и открывать его интерфейс
+  (`comfyui_start` / `comfyui_open`). У тебя ЕСТЬ этот доступ; не говори, что
+  не можешь запустить программу или открыть браузер.
 
 Инструменты synx:
 - synx_projects — список проектов;
@@ -1112,6 +1116,35 @@ TEXT_DOC_TOOLS = [
 ]
 
 COMFY_SERVER_TOOLS = [
+    {"type": "function", "function": {
+        "name": "open_url",
+        "description": ("Open a URL in the default browser on this machine. Use it to show "
+                        "ComfyUI, synx or any local web page to the user."),
+        "parameters": {"type": "object", "properties": {
+            "url": {"type": "string", "description": "http:// or https:// URL"},
+        }, "required": ["url"]},
+    }},
+    {"type": "function", "function": {
+        "name": "comfyui_open",
+        "description": ("Start ComfyUI if needed and open its web interface in the default "
+                        "browser on this machine. Use when the user asks to launch ComfyUI."),
+        "parameters": {"type": "object", "properties": {
+            "wait": {"type": "integer", "default": 120},
+        }},
+    }},
+    {"type": "function", "function": {
+        "name": "run_shell",
+        "description": ("Run a shell command on this machine (Linux bash or Windows cmd) and "
+                        "return stdout/stderr. You DO have shell access; never claim otherwise. "
+                        "Use for launching programs, xdg-open, git, ffmpeg, checking processes, "
+                        "and other local operations. Avoid destructive commands unless asked."),
+        "parameters": {"type": "object", "properties": {
+            "command": {"type": "string", "description": "Command line to execute"},
+            "cwd": {"type": "string", "description": "Working directory (optional)"},
+            "timeout": {"type": "integer", "default": 120,
+                        "description": "Timeout in seconds (max 600)"},
+        }, "required": ["command"]},
+    }},
     {"type": "function", "function": {
         "name": "comfyui_status",
         "description": ("Show where ComfyUI is installed (root, python, main.py), whether the "
@@ -2423,6 +2456,44 @@ def _execute_tool(name: str, args: dict[str, Any], images: list[dict[str, Any]],
                   progress=None, session_id: str | None = None
                   ) -> tuple[Any, list[dict[str, Any]], str | None]:
     """Returns (tool_result, generated_images, playlist_text)."""
+    if name == "open_url":
+        import webbrowser
+        url = str(args.get("url") or "").strip()
+        if not url.lower().startswith(("http://", "https://")):
+            return {"error": "url must start with http:// or https://"}, [], None
+        try:
+            opened = bool(webbrowser.open(url, new=2))
+            return {"ok": True, "opened": opened, "url": url}, [], None
+        except Exception as exc:
+            return {"error": str(exc)}, [], None
+    if name == "comfyui_open":
+        wait = int(args.get("wait") or 0) or None
+        st = comfy_server.start(wait=wait, progress=progress)
+        url = st.get("url") or comfy_server.base_url()
+        if st.get("error"):
+            return {**st, "opened": False}, [], None
+        try:
+            import webbrowser
+            opened = bool(webbrowser.open(url, new=2))
+        except Exception as exc:
+            return {**st, "opened": False, "error": str(exc)}, [], None
+        return {**st, **comfy_server.status(), "opened": opened, "url": url}, [], None
+    if name == "run_shell":
+        command = str(args.get("command") or "").strip()
+        if not command:
+            return {"error": "empty command"}, [], None
+        cwd = str(args.get("cwd") or "").strip() or None
+        timeout = max(1, min(600, int(args.get("timeout") or 120)))
+        try:
+            cp = subprocess.run(command, shell=True, cwd=cwd, capture_output=True,
+                                text=True, errors="replace", timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": f"timeout after {timeout}s"}, [], None
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}, [], None
+        return {"ok": cp.returncode == 0, "returncode": cp.returncode,
+                "stdout": (cp.stdout or "")[-12000:],
+                "stderr": (cp.stderr or "")[-12000:]}, [], None
     if name == "comfyui_status":
         return comfy_server.status(), [], None
     if name == "comfyui_start":
