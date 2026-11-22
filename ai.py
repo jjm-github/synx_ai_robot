@@ -53,7 +53,10 @@ class AIClient:
         return bool(self.ai.get("api_key") and self.ai.get("base_url") and self.ai.get("model"))
 
     def chat_message(self, messages: list[dict[str, Any]],
-                     tools: list[dict[str, Any]] | None = None) -> tuple[dict[str, Any], dict[str, int]]:
+                     tools: list[dict[str, Any]] | None = None,
+                     max_tokens: int | None = None,
+                     extra: dict[str, Any] | None = None
+                     ) -> tuple[dict[str, Any], dict[str, int]]:
         if not self.ready:
             raise AIError("AI provider is not configured: set base_url, api_key and model")
         base = str(self.ai["base_url"]).rstrip("/")
@@ -63,11 +66,13 @@ class AIClient:
             "model": self.ai["model"],
             "messages": messages,
             "temperature": float(self.ai.get("temperature", 0.2)),
-            "max_tokens": int(self.ai.get("max_tokens", 4000)),
+            "max_tokens": int(max_tokens or self.ai.get("max_tokens", 4000)),
         }
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
+        if extra:
+            payload.update(extra)
         r = requests.post(url, headers=headers, json=payload,
                           timeout=int(self.ai.get("timeout", 180)))
         if r.status_code >= 400:
@@ -83,8 +88,10 @@ class AIClient:
             "output": int(usage.get("completion_tokens") or 0),
         }
 
-    def chat(self, messages: list[dict[str, Any]]) -> tuple[str, dict[str, int]]:
-        msg, usage = self.chat_message(messages)
+    def chat(self, messages: list[dict[str, Any]],
+             max_tokens: int | None = None,
+             extra: dict[str, Any] | None = None) -> tuple[str, dict[str, int]]:
+        msg, usage = self.chat_message(messages, max_tokens=max_tokens, extra=extra)
         return msg.get("content") or "", usage
 
     def test(self) -> dict[str, Any]:

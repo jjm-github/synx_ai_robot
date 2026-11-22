@@ -175,11 +175,12 @@
           <label class="check"><input type="checkbox" id="voice-llm-correct"> LLM-коррекция распознанного текста</label>
           <label>Корректор
             <select class="input" id="voice-correct-provider">
-              <option value="ollama">Ollama — локально, GPU</option>
-              <option value="ai">Облачный AI</option>
+              <option value="ollama">Локальная модель — Ollama, GPU</option>
+              <option value="ai">Основная модель — AI провайдер</option>
               <option value="none">Без коррекции</option>
             </select>
           </label>
+          <div class="muted" id="voice-main-model-info">Основная модель: —</div>
           <label>Ollama URL<input class="input" id="voice-ollama-url" placeholder="http://127.0.0.1:11434"></label>
           <label>Модель<input class="input" id="voice-ollama-model" placeholder="qwen2.5:7b-instruct-q4_K_M"></label>
           <div class="row-actions">

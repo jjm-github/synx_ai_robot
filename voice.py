@@ -442,10 +442,24 @@ class VoiceEngine:
         ai = AIClient()
         if not ai.ready:
             return ""
-        out, _ = ai.chat([
+        messages = [
             {"role": "system", "content": CORRECT_SYSTEM},
             {"role": "user", "content": text},
-        ])
+        ]
+        tokens = min(2048, max(512, len(text) // 2 + 64))
+        out = ""
+        # Disable thinking for the corrector: reasoning models otherwise spend
+        # the whole budget on "thinking" and return an empty final message.
+        # Retry a couple of times because providers occasionally ignore it.
+        for attempt in range(3):
+            extra = ({"thinking": {"type": "disabled"}}
+                     if attempt < 2 else {"reasoning_effort": "none"})
+            try:
+                out, _ = ai.chat(messages, max_tokens=tokens, extra=extra)
+            except Exception:
+                out = ""
+            if out:
+                break
         return (out or "").strip()
 
     def _correct(self, text: str) -> str:
@@ -517,9 +531,10 @@ class VoiceEngine:
         out = self._correct(sample)
         c = self._correct_cfg()
         provider = str(c.get("provider") or "ollama")
+        main_model = str((load_config().get("ai") or {}).get("model") or "AI")
         info: dict[str, Any] = {
             "provider": provider,
-            "model": c.get("model") if provider == "ollama" else "ai",
+            "model": c.get("model") if provider == "ollama" else main_model,
             "seconds": self._correct_seconds,
             "text": out,
             "ok": bool(out and out != sample),

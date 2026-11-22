@@ -1219,7 +1219,7 @@
       var provider = String(corr.provider || "ollama").toLowerCase();
       var label;
       if (!enabled || provider === "none" || provider === "off") label = "выключен";
-      else if (provider === "ai") label = "облачный AI";
+      else if (provider === "ai") label = "основная модель · " + ((c.ai || {}).model || "AI");
       else label = String(corr.model || "ollama");
       corrEl.textContent = "корректор: " + label;
       corrEl.title = "Коррекция речи: " + label +
@@ -1246,8 +1246,9 @@
       return;
     }
     if (provider === "ai") {
-      corrEl.textContent = "корректор: облачный AI";
-      corrEl.title = "Коррекция речи выполняется облачной моделью";
+      var mainModel = String((c.ai || {}).model || "AI");
+      corrEl.textContent = "корректор: основная модель · " + mainModel;
+      corrEl.title = "Коррекция речи выполняется основной AI-моделью: " + mainModel;
       corrDot.className = "dot on";
       return;
     }
@@ -1332,6 +1333,8 @@
     $("voice-ollama-model").value = vc.model || "";
     $("voice-keep-alive").value = vc.keep_alive || "5m";
     $("voice-correct-timeout").value = vc.timeout || 30;
+    $("voice-main-model-info").textContent = "Основная модель: " + (ai.model || "не задана");
+    voiceProviderUi();
     $("pipe-publish").checked = !!pi.auto_publish;
     $("pipe-poll").value = pi.poll_seconds || 5;
     $("pipe-work").value = pi.work_root || "";
@@ -1386,9 +1389,31 @@
     if (mb >= 1024) return (mb / 1024).toFixed(1) + " ГБ";
     return Math.round(mb) + " МБ";
   }
+  function voiceProviderUi() {
+    var provider = ($("voice-correct-provider").value || "ollama").toLowerCase();
+    var local = provider === "ollama";
+    ["voice-ollama-url", "voice-ollama-model", "voice-model-pick",
+     "voice-models-refresh", "voice-model-unload", "voice-keep-alive"].forEach(function (id) {
+      var el = $(id);
+      if (el) el.disabled = !local;
+    });
+    var info = $("voice-main-model-info");
+    if (info) {
+      info.textContent = "Основная модель: " +
+        ((state.config && state.config.ai && state.config.ai.model) || "не задана");
+    }
+    updateVoiceModelInfo();
+  }
+
   function updateVoiceModelInfo() {
     var el = $("voice-model-info");
     if (!el) return;
+    var provider = ($("voice-correct-provider").value || "ollama").toLowerCase();
+    if (provider === "ai") {
+      el.textContent = "Используется основная модель: " + ((state.config && state.config.ai && state.config.ai.model) || "—");
+      return;
+    }
+    if (provider === "none") { el.textContent = "Коррекция отключена"; return; }
     var name = ($("voice-ollama-model").value || "").trim();
     if (!name) { el.textContent = "—"; return; }
     var m = voiceModels.find(function (x) { return x.name === name; });
@@ -1424,6 +1449,10 @@
       updateVoiceModelInfo();
     }
   }
+  $("voice-correct-provider").addEventListener("change", voiceProviderUi);
+  $("ai-model").addEventListener("input", function () {
+    voiceProviderUi();
+  });
   $("voice-model-pick").addEventListener("change", function () {
     if (this.value) {
       $("voice-ollama-model").value = this.value;
