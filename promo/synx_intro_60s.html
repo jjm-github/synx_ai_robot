@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SYNX — 60 секунд</title>
+<style>
+  :root {
+    --bg: #080a0d;
+    --ink: #f2f4f7;
+    --muted: #8a949f;
+    --accent: #f0a54a;
+    --accent2: #7fb7ff;
+    --line: rgba(255,255,255,.13);
+    --font: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
+    font-family: var(--font); -webkit-font-smoothing: antialiased;
+  }
+  .stage {
+    position: fixed; inset: 0; overflow: hidden;
+    background:
+      radial-gradient(900px 620px at 72% 18%, rgba(240,165,74,.12), transparent 62%),
+      radial-gradient(760px 560px at 20% 78%, rgba(127,183,255,.10), transparent 65%),
+      linear-gradient(145deg, #080a0d 0%, #0b0e13 52%, #07090c 100%);
+  }
+  .grid {
+    position: absolute; inset: -20%;
+    background-image:
+      linear-gradient(rgba(255,255,255,.038) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,.038) 1px, transparent 1px);
+    background-size: 72px 72px;
+    transform: perspective(800px) rotateX(58deg) translateY(18%);
+    transform-origin: 50% 100%;
+    opacity: .45;
+    animation: gridDrift 26s linear infinite;
+    mask-image: radial-gradient(ellipse at 50% 60%, #000 0%, transparent 72%);
+    -webkit-mask-image: radial-gradient(ellipse at 50% 60%, #000 0%, transparent 72%);
+  }
+  @keyframes gridDrift { to { background-position: 0 72px, 72px 0; } }
+
+  .orb {
+    position: absolute; border-radius: 50%; filter: blur(70px);
+    opacity: .5; pointer-events: none; animation: float 22s ease-in-out infinite alternate;
+  }
+  .orb.a { width: 42vw; height: 42vw; left: -12vw; top: -18vw; background: rgba(127,183,255,.13); }
+  .orb.b { width: 38vw; height: 38vw; right: -14vw; bottom: -20vw; background: rgba(240,165,74,.12); animation-delay: -8s; }
+  @keyframes float { from { transform: translate3d(0,0,0) scale(1); } to { transform: translate3d(3vw,-2vw,0) scale(1.08); } }
+
+  .vignette {
+    position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,.55) 100%);
+  }
+  .grain {
+    position: absolute; inset: 0; pointer-events: none; opacity: .16; mix-blend-mode: screen;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.35'/%3E%3C/svg%3E");
+  }
+
+  .top {
+    position: absolute; z-index: 5; top: 4.2vh; left: 4.8vw; right: 4.8vw;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .brand { display: flex; align-items: center; gap: 13px; opacity: .9; }
+  .logo {
+    display: block; width: 104px; height: 32px;
+    background: var(--ink);
+    -webkit-mask: url("../static/synks_logo.svg") center / contain no-repeat;
+    mask: url("../static/synks_logo.svg") center / contain no-repeat;
+  }
+  .top-note {
+    color: var(--muted); font-size: 10px; letter-spacing: .24em;
+    text-transform: uppercase; white-space: nowrap;
+  }
+
+  .scenes { position: absolute; inset: 0; z-index: 3; }
+  .scene {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    padding: 14vh 8vw 15vh; opacity: 0; visibility: hidden;
+    transition: opacity .55s ease, visibility .55s;
+  }
+  .scene.is-active { opacity: 1; visibility: visible; }
+  .scene-inner { width: min(92vw, 1320px); text-align: center; }
+  .kicker {
+    display: inline-flex; align-items: center; gap: 10px;
+    color: var(--accent); font-size: clamp(9px, .78vw, 12px);
+    letter-spacing: .32em; text-transform: uppercase; margin-bottom: 2.2vh;
+  }
+  .kicker::before {
+    content: ""; width: 26px; height: 1px; background: currentColor; opacity: .7;
+  }
+  .line-a {
+    font-size: clamp(36px, 6.4vw, 108px); line-height: .96;
+    font-weight: 760; letter-spacing: -.045em; margin: 0;
+    text-wrap: balance;
+  }
+  .line-b {
+    margin: 2.2vh 0 0; color: var(--muted);
+    font-size: clamp(13px, 1.35vw, 21px); line-height: 1.4;
+    letter-spacing: .01em;
+  }
+  .scene.hero .line-a {
+    font-size: clamp(76px, 15vw, 250px); letter-spacing: -.07em;
+    background: linear-gradient(100deg, #fff 24%, #c6d2e0 62%, var(--accent));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .scene.small .line-a { font-size: clamp(32px, 5.1vw, 86px); }
+  .scene.is-active .kicker,
+  .scene.is-active .line-a,
+  .scene.is-active .line-b {
+    animation: rise 1.15s cubic-bezier(.16,1,.3,1) both;
+  }
+  .scene.is-active .line-a { animation-delay: .12s; }
+  .scene.is-active .line-b { animation-delay: .28s; }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(34px); filter: blur(12px); }
+    to { opacity: 1; transform: translateY(0); filter: blur(0); }
+  }
+  .scene::after {
+    content: attr(data-num); position: absolute; right: 8vw; bottom: 13vh;
+    color: rgba(255,255,255,.12); font-size: clamp(46px, 8vw, 130px);
+    font-weight: 800; letter-spacing: -.06em; pointer-events: none;
+  }
+
+  .bottom {
+    position: absolute; z-index: 6; left: 4.8vw; right: 4.8vw; bottom: 4.2vh;
+    display: flex; align-items: center; gap: 18px;
+  }
+  .timeline { flex: 1 1 auto; height: 2px; background: rgba(255,255,255,.12); overflow: hidden; }
+  .timeline > i {
+    display: block; height: 100%; width: 0%;
+    background: linear-gradient(90deg, var(--accent), #ffd39b);
+  }
+  .time { color: var(--muted); font-size: 10px; letter-spacing: .16em; white-space: nowrap; }
+  .ticks { display: flex; gap: 7px; }
+  .ticks span { width: 3px; height: 3px; border-radius: 50%; background: rgba(255,255,255,.2); transition: background .3s; }
+  .ticks span.on { background: var(--accent); }
+
+  .pause-hint {
+    position: absolute; z-index: 7; right: 4.8vw; bottom: 7.2vh;
+    color: rgba(255,255,255,.24); font-size: 9px; letter-spacing: .16em;
+    text-transform: uppercase; pointer-events: none;
+  }
+
+  @media (max-width: 700px) {
+    .logo { width: 78px; height: 24px; }
+    .top-note { display: none; }
+    .scene { padding: 16vh 6vw; }
+    .scene::after { right: 6vw; bottom: 15vh; }
+    .bottom { left: 6vw; right: 6vw; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .grid, .orb { animation: none; }
+    .scene { transition: none; }
+    .scene.is-active .kicker,
+    .scene.is-active .line-a,
+    .scene.is-active .line-b { animation-duration: .01ms; animation-delay: 0s; }
+  }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="grid"></div>
+  <div class="orb a"></div>
+  <div class="orb b"></div>
+  <div class="vignette"></div>
+  <div class="grain"></div>
+
+  <header class="top">
+    <div class="brand"><span class="logo" role="img" aria-label="SYNX"></span></div>
+    <div class="top-note">production system · 60 sec</div>
+  </header>
+
+  <main class="scenes" id="scenes">
+    <article class="scene hero" data-num="01">
+      <div class="scene-inner">
+        <div class="kicker">система производства</div>
+        <h1 class="line-a">SYNX</h1>
+        <p class="line-b">визуальный контент под контролем</p>
+      </div>
+    </article>
+
+    <article class="scene" data-num="02">
+      <div class="scene-inner">
+        <div class="kicker">назначение</div>
+        <h1 class="line-a">От сценария</h1>
+        <p class="line-b">до готового кадра</p>
+      </div>
+    </article>
+
+    <article class="scene" data-num="03">
+      <div class="scene-inner">
+        <div class="kicker">структура</div>
+        <h1 class="line-a">Сценарий → шоты</h1>
+        <p class="line-b">секвенции · тайминг · задачи</p>
+      </div>
+    </article>
+
+    <article class="scene small" data-num="04">
+      <div class="scene-inner">
+        <div class="kicker">контекст</div>
+        <h1 class="line-a">Ассеты и связи</h1>
+        <p class="line-b">локации · персонажи · реквизит</p>
+      </div>
+    </article>
+
+    <article class="scene small" data-num="05">
+      <div class="scene-inner">
+        <div class="kicker">команда</div>
+        <h1 class="line-a">Задачи и боты</h1>
+        <p class="line-b">каждый знает свой шаг</p>
+      </div>
+    </article>
+
+    <article class="scene" data-num="06">
+      <div class="scene-inner">
+        <div class="kicker">производство</div>
+        <h1 class="line-a">Конвейер</h1>
+        <p class="line-b">генерация → сборка → ревью</p>
+      </div>
+    </article>
+
+    <article class="scene small" data-num="07">
+      <div class="scene-inner">
+        <div class="kicker">рендер</div>
+        <h1 class="line-a">ComfyUI + GPU</h1>
+        <p class="line-b">локально · быстро · воспроизводимо</p>
+      </div>
+    </article>
+
+    <article class="scene small" data-num="08">
+      <div class="scene-inner">
+        <div class="kicker">история</div>
+        <h1 class="line-a">Версии и ревью</h1>
+        <p class="line-b">комментарии · публикации · контекст</p>
+      </div>
+    </article>
+
+    <article class="scene small" data-num="09">
+      <div class="scene-inner">
+        <div class="kicker">единая система</div>
+        <h1 class="line-a">Один проект</h1>
+        <p class="line-b">для всей команды</p>
+      </div>
+    </article>
+
+    <article class="scene hero" data-num="10">
+      <div class="scene-inner">
+        <div class="kicker">SYNX</div>
+        <h1 class="line-a">Производство</h1>
+        <p class="line-b">под контролем</p>
+      </div>
+    </article>
+  </main>
+
+  <footer class="bottom">
+    <span class="time" id="time">00:00 / 01:00</span>
+    <div class="timeline"><i id="progress"></i></div>
+    <div class="ticks" id="ticks" aria-hidden="true"></div>
+  </footer>
+  <div class="pause-hint">space — пауза</div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var DURATION = 60000;
+  var scenes = Array.prototype.slice.call(document.querySelectorAll(".scene"));
+  var progress = document.getElementById("progress");
+  var timeEl = document.getElementById("time");
+  var ticks = document.getElementById("ticks");
+  var index = -1;
+  var startSec = parseFloat(new URLSearchParams(location.search).get("t") || "0");
+  if (!isFinite(startSec)) startSec = 0;
+  var elapsed = Math.max(0, Math.min(59.99, startSec)) * 1000;
+  var last = performance.now();
+  var paused = false;
+
+  scenes.forEach(function (_, i) {
+    var dot = document.createElement("span");
+    dot.dataset.index = String(i);
+    ticks.appendChild(dot);
+  });
+  var dots = Array.prototype.slice.call(ticks.children);
+
+  function fmt(ms) {
+    var s = Math.floor(ms / 1000);
+    return String(Math.floor(s / 60)).padStart(2, "0") + ":" +
+      String(s % 60).padStart(2, "0");
+  }
+
+  function activate(i) {
+    if (i === index) return;
+    index = i;
+    scenes.forEach(function (scene, n) {
+      scene.classList.toggle("is-active", n === i);
+    });
+    dots.forEach(function (dot, n) {
+      dot.classList.toggle("on", n <= i);
+    });
+  }
+
+  function frame(now) {
+    var delta = Math.min(100, now - last);
+    last = now;
+    if (!paused) {
+      elapsed = (elapsed + delta) % DURATION;
+    }
+    var sceneMs = DURATION / scenes.length;
+    activate(Math.min(scenes.length - 1, Math.floor(elapsed / sceneMs)));
+    progress.style.width = (elapsed / DURATION * 100).toFixed(2) + "%";
+    timeEl.textContent = fmt(elapsed) + " / " + fmt(DURATION);
+    requestAnimationFrame(frame);
+  }
+
+  document.addEventListener("keydown", function (event) {
+    if (event.code === "Space") {
+      event.preventDefault();
+      paused = !paused;
+    }
+  });
+  document.addEventListener("click", function () {
+    paused = !paused;
+  });
+
+  activate(0);
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
