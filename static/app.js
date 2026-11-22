@@ -85,6 +85,7 @@
   // ---------- chat ----------
   var chatAttachments = [];
   var chatSession = "default";
+  var chatScrollPositions = {};
 
   function mdHtml(text) {
     if (!text) return "";
@@ -169,8 +170,12 @@
   }
   function renderChatMessages(msgs) {
     var box = $("chat-messages");
+    var prevScroll = box.scrollTop;
+    var nearBottom = box.scrollHeight - prevScroll - box.clientHeight < 80;
     if (!msgs || !msgs.length) {
       box.innerHTML = '<div class="chat-empty"><b>Чат с моделью</b><br><br>Спроси что-нибудь или попроси:<br>«Нарисуй кадр в стиле чёрной туши по этим референсам».<br>Референсы любого типа можно прикрепить кнопкой «+ Референс» или перетащить в поле ввода.</div>';
+      box.scrollTop = 0;
+      chatScrollPositions[chatSession] = 0;
       return;
     }
     box.innerHTML = "";
@@ -210,7 +215,12 @@
         c.title = "Открыть файл";
       }
     });
-    box.scrollTop = box.scrollHeight;
+    if (nearBottom || chatScrollPositions[chatSession] == null) {
+      box.scrollTop = box.scrollHeight;
+    } else {
+      box.scrollTop = prevScroll;
+    }
+    chatScrollPositions[chatSession] = box.scrollTop;
   }
   async function loadChatSessions(preferred) {
     try {
@@ -557,18 +567,31 @@
     box.appendChild(wrap); box.scrollTop = box.scrollHeight;
     return wrap;
   }
-  function appendThinkingBubble() {
+  function appendThinkingBubble(job) {
     var box = $("chat-messages");
-    var wrap = document.createElement("div"); wrap.className = "msg assistant"; wrap.id = "chat-thinking";
+    var expanded = !!(job && job.expanded);
+    var wrap = document.createElement("div");
+    wrap.className = "msg assistant" + (expanded ? "" : " thinking-collapsed");
+    wrap.id = "chat-thinking";
     wrap.innerHTML = '<div class="msg-avatar">AI</div><div class="msg-bubble">' +
-      '<div class="thinking-row"><span class="thinking-dots"><i></i><i></i><i></i></span><span id="thinking-text">Анализирую запрос...</span></div>' +
+      '<div class="thinking-row" id="thinking-toggle" title="Показать или скрыть шаги">' +
+      '<span class="thinking-dots"><i></i><i></i><i></i></span>' +
+      '<span id="thinking-text">Анализирую запрос...</span>' +
+      '<span class="thinking-chevron">' + (expanded ? "▾" : "▸") + '</span></div>' +
       '<div class="job-log" id="job-log"><div class="job-log-head"><span>Действие</span><span>вход</span><span>выход</span></div></div>' +
       '<div class="job-images" id="job-images"></div>' +
       '<div class="thinking-footer"><button class="btn danger hidden" id="chat-stop" title="Остановить ответ">■ Стоп</button></div>' +
       '</div>';
     var stop = wrap.querySelector("#chat-stop");
     if (stop) stop.addEventListener("click", stopChatJob);
-    box.appendChild(wrap); box.scrollTop = box.scrollHeight;
+    wrap.querySelector("#thinking-toggle").addEventListener("click", function () {
+      var collapsed = wrap.classList.toggle("thinking-collapsed");
+      var j = currentChatJob();
+      if (j) j.expanded = !collapsed;
+      var chev = wrap.querySelector(".thinking-chevron");
+      if (chev) chev.textContent = collapsed ? "▸" : "▾";
+    });
+    box.appendChild(wrap);
     return wrap;
   }
   var chatJobs = {};
@@ -642,13 +665,12 @@
     var jb = $("job-images"); if (jb) jb.innerHTML = "";
     var state = {stepLines: {}};
     (job.events || []).forEach(function (evt) { applyJobEvent(evt, state); });
-    var box = $("chat-messages"); if (box) box.scrollTop = box.scrollHeight;
   }
   function renderThinkingForCurrent() {
     var old = $("chat-thinking"); if (old) old.remove();
     var job = currentChatJob();
     if (!job || job.status === "done") { setChatRunning(false); return; }
-    appendThinkingBubble();
+    appendThinkingBubble(job);
     renderJobEvents(job);
     setChatRunning(true);
   }
@@ -708,7 +730,7 @@
     appendUserBubble(text, images);
     var job = {id: null, events: [], seen: 0, status: "starting"};
     chatJobs[sid] = job;
-    appendThinkingBubble();
+    appendThinkingBubble(job);
     setChatRunning(true);
     try {
       var d = await api("/api/chat/send", { method: "POST", body: JSON.stringify(payload) });
@@ -886,9 +908,13 @@
   }
   $("chat-folders").addEventListener("click", openFoldersModal);
   $("chat-session").addEventListener("change", function () {
+    chatScrollPositions[chatSession] = $("chat-messages").scrollTop;
     chatSession = this.value;
     syncChatUi();
     loadChat();
+  });
+  $("chat-messages").addEventListener("scroll", function () {
+    chatScrollPositions[chatSession] = this.scrollTop;
   });
   $("chat-new").addEventListener("click", async function () {
     var title = "Чат " + new Date().toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
