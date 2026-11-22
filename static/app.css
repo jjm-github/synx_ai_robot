@@ -24,12 +24,30 @@ body {
   overflow: hidden;
 }
 button, input, select, textarea { font: inherit; color: inherit; }
-#app { display: grid; grid-template-columns: 240px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 26px; height: 100vh; }
+#app {
+  display: grid; grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) 26px; height: 100vh;
+}
+#app.sidebar-collapsed { grid-template-columns: 46px minmax(0, 1fr); }
 
 .sidebar {
-  grid-column: 1; grid-row: 1;
+  grid-column: 1; grid-row: 1; position: relative;
   background: var(--bg); border-right: 1px solid var(--line);
   display: flex; flex-direction: column; padding: 15.3px 14px; min-height: 0;
+  min-width: 0;
+}
+.sidebar-toggle {
+  position: absolute; right: 3px; top: 50%; transform: translateY(-50%);
+  width: 18px; height: 40px; padding: 0; z-index: 10;
+  border: 1px solid var(--line2); border-radius: 4px 0 0 4px;
+  background: var(--panel); color: var(--muted); cursor: pointer;
+  font-size: 14px; line-height: 1;
+}
+.sidebar-toggle:hover { color: var(--text); border-color: var(--accent-soft-line); }
+.sidebar.collapsed { padding-left: 4px; padding-right: 4px; }
+.sidebar.collapsed > :not(.sidebar-toggle) { display: none; }
+.sidebar.collapsed .sidebar-toggle {
+  right: 50%; transform: translate(50%, -50%); border-radius: 4px;
 }
 .brand {
   position: relative;

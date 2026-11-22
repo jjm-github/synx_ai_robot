@@ -4,6 +4,21 @@
   var $ = function (id) { return document.getElementById(id); };
   var state = { config: null, bots: [], tasks: [], activeId: null, view: "chat" };
 
+  function applySidebarCollapsed(collapsed) {
+    var app = $("app"), side = document.querySelector(".sidebar");
+    var btn = $("sidebar-toggle");
+    if (app) app.classList.toggle("sidebar-collapsed", !!collapsed);
+    if (side) side.classList.toggle("collapsed", !!collapsed);
+    if (btn) {
+      btn.textContent = collapsed ? "›" : "‹";
+      btn.title = collapsed ? "Развернуть левую панель" : "Свернуть левую панель";
+      btn.setAttribute("aria-label", btn.title);
+    }
+  }
+  if (window.SYNX_UI_STATE && window.SYNX_UI_STATE.sidebar_collapsed) {
+    applySidebarCollapsed(true);
+  }
+
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
@@ -57,6 +72,14 @@
   document.querySelectorAll(".nav-btn").forEach(function (b) {
     b.addEventListener("click", function () { setView(b.dataset.view); });
   });
+  var sidebarToggle = $("sidebar-toggle");
+  if (sidebarToggle) {
+    sidebarToggle.addEventListener("click", function () {
+      var collapsed = !$("app").classList.contains("sidebar-collapsed");
+      applySidebarCollapsed(collapsed);
+      saveSidebarCollapsed(collapsed);
+    });
+  }
 
 
   // ---------- chat ----------
@@ -282,9 +305,19 @@
       });
     } catch (e) { /* panel size is cosmetic */ }
   }
+  async function saveSidebarCollapsed(collapsed) {
+    try {
+      await api("/api/ui/chat-panels", {
+        method: "POST", body: JSON.stringify({sidebar_collapsed: !!collapsed})
+      });
+    } catch (e) { /* panel state is cosmetic */ }
+  }
   async function loadChatPanels() {
     try {
       var d = await api("/api/ui/chat-panels");
+      if (typeof d.sidebar_collapsed === "boolean") {
+        applySidebarCollapsed(d.sidebar_collapsed);
+      }
       var h = Number(d.composer_height || 0);
       if (h > 0) applyChatComposerHeight(h);
     } catch (e) { /* defaults */ }
@@ -318,6 +351,9 @@
     }
     split.addEventListener("pointerup", finish);
     split.addEventListener("pointercancel", finish);
+    split.addEventListener("lostpointercapture", finish);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
     split.addEventListener("dblclick", function () {
       applyChatComposerHeight(0);
       saveChatComposerHeight(0);

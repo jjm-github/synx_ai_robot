@@ -105,7 +105,8 @@ class UiThemeBody(BaseModel):
 
 
 class ChatPanelsBody(BaseModel):
-    composer_height: float = 0
+    composer_height: float | None = None
+    sidebar_collapsed: bool | None = None
 
 
 class ChatSessionBody(BaseModel):
@@ -351,17 +352,27 @@ def ui_theme_set(body: UiThemeBody):
 def chat_panels_get():
     try:
         data = json.loads((DATA_DIR / "ui_chat_panels.json").read_text(encoding="utf-8"))
-        return {"composer_height": float(data.get("composer_height") or 0)}
     except Exception:
-        return {"composer_height": 0}
+        data = {}
+    return {"composer_height": float(data.get("composer_height") or 0),
+            "sidebar_collapsed": bool(data.get("sidebar_collapsed"))}
 
 
 @app.post("/api/ui/chat-panels")
 def chat_panels_set(body: ChatPanelsBody):
-    height = max(0.0, min(2000.0, float(body.composer_height or 0)))
-    (DATA_DIR / "ui_chat_panels.json").write_text(
-        json.dumps({"composer_height": height}), encoding="utf-8")
-    return {"composer_height": height}
+    path = DATA_DIR / "ui_chat_panels.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+    if body.composer_height is not None:
+        data["composer_height"] = max(0.0, min(2000.0, float(body.composer_height)))
+    if body.sidebar_collapsed is not None:
+        data["sidebar_collapsed"] = bool(body.sidebar_collapsed)
+    data.setdefault("composer_height", 0)
+    data.setdefault("sidebar_collapsed", False)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return data
 
 
 @app.on_event("startup")
@@ -390,6 +401,12 @@ def index():
     keys = ("bg", "field", "text", "sel")
     if all(re.fullmatch(r"#[0-9a-fA-F]{6}", str(colors.get(k) or "")) for k in keys):
         state["theme_colors"] = ",".join(str(colors[k]) for k in keys)
+    try:
+        panels = json.loads((DATA_DIR / "ui_chat_panels.json").read_text(encoding="utf-8"))
+        if panels.get("sidebar_collapsed"):
+            state["sidebar_collapsed"] = True
+    except Exception:
+        pass
     inject = ("<script>window.SYNX_UI_STATE = "
               + json.dumps(state, ensure_ascii=False) + ";</script>\n  ")
     html = html.replace('<script src="/static/theme.js"></script>',
