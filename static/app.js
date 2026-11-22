@@ -241,6 +241,92 @@
       });
     });
   }
+  // ---------- chat splitter: resize input vs history ----------
+  var chatComposerHeight = 0;
+  var CHAT_COMPOSER_MIN = 115;
+  var CHAT_MESSAGES_MIN = 120;
+
+  function appRenderScale() {
+    var app = $("app");
+    if (!app || !app.offsetWidth) return 1;
+    return app.getBoundingClientRect().width / app.offsetWidth || 1;
+  }
+  function clampChatComposer(h) {
+    var shell = document.querySelector(".chat-shell");
+    var head = document.querySelector(".chat-head");
+    if (!shell) return Math.max(CHAT_COMPOSER_MIN, h);
+    var scale = appRenderScale();
+    var shellH = shell.getBoundingClientRect().height / scale;
+    var headH = head ? head.getBoundingClientRect().height / scale : 0;
+    var maxH = Math.max(CHAT_COMPOSER_MIN, shellH - headH - 7 - CHAT_MESSAGES_MIN);
+    return Math.max(CHAT_COMPOSER_MIN, Math.min(maxH, h));
+  }
+  function applyChatComposerHeight(h) {
+    var comp = $("chat-composer");
+    if (!comp) return;
+    if (!h || h < 40) {
+      comp.style.height = "";
+      comp.style.flex = "";
+      chatComposerHeight = 0;
+      return;
+    }
+    var height = clampChatComposer(h);
+    comp.style.flex = "0 0 auto";
+    comp.style.height = Math.round(height) + "px";
+    chatComposerHeight = height;
+  }
+  async function saveChatComposerHeight(h) {
+    try {
+      await api("/api/ui/chat-panels", {
+        method: "POST", body: JSON.stringify({composer_height: h || 0})
+      });
+    } catch (e) { /* panel size is cosmetic */ }
+  }
+  async function loadChatPanels() {
+    try {
+      var d = await api("/api/ui/chat-panels");
+      var h = Number(d.composer_height || 0);
+      if (h > 0) applyChatComposerHeight(h);
+    } catch (e) { /* defaults */ }
+  }
+  (function initChatSplitter() {
+    var split = $("chat-splitter");
+    var comp = $("chat-composer");
+    if (!split || !comp) return;
+    var drag = null;
+    split.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      var scale = appRenderScale();
+      drag = {y: e.clientY, h: comp.getBoundingClientRect().height / scale};
+      split.classList.add("dragging");
+      document.body.classList.add("chat-resizing");
+      try { split.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+    split.addEventListener("pointermove", function (e) {
+      if (!drag) return;
+      e.preventDefault();
+      var scale = appRenderScale();
+      applyChatComposerHeight(drag.h - (e.clientY - drag.y) / scale);
+    });
+    function finish() {
+      if (!drag) return;
+      drag = null;
+      split.classList.remove("dragging");
+      document.body.classList.remove("chat-resizing");
+      saveChatComposerHeight(chatComposerHeight);
+    }
+    split.addEventListener("pointerup", finish);
+    split.addEventListener("pointercancel", finish);
+    split.addEventListener("dblclick", function () {
+      applyChatComposerHeight(0);
+      saveChatComposerHeight(0);
+    });
+    window.addEventListener("resize", function () {
+      if (chatComposerHeight > 0) applyChatComposerHeight(chatComposerHeight);
+    });
+  })();
+
   function insertIntoChatInput(text) {
     if (!text) return;
     var ta = $("chat-input");
@@ -1897,6 +1983,7 @@
   // ---------- init ----------
   async function init() {
     await loadSettings();
+    loadChatPanels();
     await loadTasks();
     await loadChatSessions();
     await loadChat();

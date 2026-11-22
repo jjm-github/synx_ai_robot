@@ -104,6 +104,10 @@ class UiThemeBody(BaseModel):
     colors: dict[str, str] = {}
 
 
+class ChatPanelsBody(BaseModel):
+    composer_height: float = 0
+
+
 class ChatSessionBody(BaseModel):
     title: str = "Новый чат"
 
@@ -341,6 +345,23 @@ def ui_theme_set(body: UiThemeBody):
     (DATA_DIR / "ui_theme.json").write_text(
         json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return data
+
+
+@app.get("/api/ui/chat-panels")
+def chat_panels_get():
+    try:
+        data = json.loads((DATA_DIR / "ui_chat_panels.json").read_text(encoding="utf-8"))
+        return {"composer_height": float(data.get("composer_height") or 0)}
+    except Exception:
+        return {"composer_height": 0}
+
+
+@app.post("/api/ui/chat-panels")
+def chat_panels_set(body: ChatPanelsBody):
+    height = max(0.0, min(2000.0, float(body.composer_height or 0)))
+    (DATA_DIR / "ui_chat_panels.json").write_text(
+        json.dumps({"composer_height": height}), encoding="utf-8")
+    return {"composer_height": height}
 
 
 @app.on_event("startup")
