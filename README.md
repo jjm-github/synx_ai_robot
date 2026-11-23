@@ -16,6 +16,10 @@
 
 ## Установка
 
+Готовые установщики для Windows и macOS лежат в
+[Releases](https://github.com/jjm-github/synx_ai_robot/releases): `.exe` для
+Windows 10/11, `.dmg` для Apple Silicon и Intel, `.deb` для Ubuntu/Mint.
+
 ### Ubuntu / Linux Mint — скрипт
 
 ```bash
@@ -137,6 +141,40 @@ powershell -ExecutionPolicy Bypass -File packaging\windows\build_windows.ps1
 «голосовые модели» и выбор LLM (`qwen3.5:4b`, `qwen2.5:7b`, обе).
 `build_windows.ps1` заранее скачивает Windows-wheels, Python 3.12 и
 ffmpeg/poppler, поэтому Python-зависимости ставятся из локальных wheel-файлов.
+
+### macOS — установщик .dmg
+
+Сборка выполняется **на macOS** (Python 3.12 + Xcode Command Line Tools):
+
+```bash
+./packaging/macos/build_macos.sh
+# или с версией/архитектурой:
+VERSION=1.1.0 ARCH_LABEL=arm64 ./packaging/macos/build_macos.sh
+```
+
+Результат: `dist/IIRobot-<version>-macOS-<arch>.dmg` — внутри `IIRobot.app`,
+ffmpeg/ffprobe и ярлык Applications. Приложение собирается PyInstaller'ом
+(интерпретатор и зависимости внутри), подписывается ad-hoc и проверяется
+smoke-тестом (`--server-only` + `/api/health`). Нотаризации Apple нет, поэтому
+при первом запуске нужно «ПКМ → Открыть» (или
+`xattr -dr com.apple.quarantine /Applications/IIRobot.app`).
+
+Данные и настройки: `~/Library/Application Support/IIRobot`, лог
+`iirobot.log` там же. Голосовой ввод на macOS идёт через CoreAudio
+(`sounddevice`), при первом запуске система спросит доступ к микрофону.
+
+### Релиз
+
+`.github/workflows/release.yml` собирает Windows-установщик, DMG для arm64 и
+x86_64 и `.deb`, затем публикует GitHub Release:
+
+```bash
+git tag v1.0.0 && git push origin v1.0.0     # релиз по тегу
+gh workflow run Release -f version=1.0.0     # или вручную из Actions
+```
+
+Релиз создаётся только если прошли сборки Windows и macOS arm64; Intel DMG и
+`.deb` добавляются, когда собираются успешно.
 
 ### Ручная установка
 

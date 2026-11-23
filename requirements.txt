@@ -8,4 +8,4 @@ python-multipart>=0.0.9
 duckduckgo-mcp-server>=0.7
 reportlab>=5.0
 sherpa-onnx==2.0.1
-sounddevice>=0.5; sys_platform == "win32"
+sounddevice>=0.5; sys_platform == "win32" or sys_platform == "darwin"

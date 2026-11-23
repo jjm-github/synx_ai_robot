@@ -1,0 +1,278 @@
+name: Release
+
+# Собирает установщики под Windows и macOS (плюс .deb для Linux) и публикует
+# GitHub Release.
+#
+#   * push тега v1.2.3          -> релиз v1.2.3
+#   * ручной запуск (Actions)   -> релиз v<version> из формы
+#
+# Артефакты:
+#   IiRobot-<version>-Setup.exe        Windows 10/11 x64 (Inno Setup)
+#   IiRobot-<version>-macOS-arm64.dmg  macOS Apple Silicon
+#   IiRobot-<version>-macOS-x86_64.dmg macOS Intel (не блокирует релиз)
+#   iirobot_<version>_amd64.deb        Ubuntu / Linux Mint
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Версия без префикса v (например 1.0.0)"
+        required: true
+        default: "1.0.0"
+      publish:
+        description: "Опубликовать GitHub Release"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: ver
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            V="${{ inputs.version }}"
+          else
+            V="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: ./packaging/windows/build_windows.ps1 -Version $env:VERSION
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-setup
+          if-no-files-found: error
+          retention-days: 7
+          path: dist/IIRobot-${{ steps.ver.outputs.version }}-Setup.exe
+
+  macos-arm64:
+    name: macOS installer (arm64)
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: ver
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            V="${{ inputs.version }}"
+          else
+            V="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build DMG
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          ARCH_LABEL: arm64
+          SMOKE: "1"
+        run: ./packaging/macos/build_macos.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          if-no-files-found: error
+          retention-days: 7
+          path: dist/IIRobot-${{ steps.ver.outputs.version }}-macOS-arm64.dmg
+
+  macos-intel:
+    name: macOS installer (x86_64)
+    runs-on: macos-15-intel
+    timeout-minutes: 60
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: ver
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            V="${{ inputs.version }}"
+          else
+            V="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build DMG
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          ARCH_LABEL: x86_64
+          SMOKE: "1"
+        run: ./packaging/macos/build_macos.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-x86_64
+          if-no-files-found: error
+          retention-days: 7
+          path: dist/IIRobot-${{ steps.ver.outputs.version }}-macOS-x86_64.dmg
+
+  linux:
+    name: Linux .deb
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: ver
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            V="${{ inputs.version }}"
+          else
+            V="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build .deb
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: ./packaging/build_deb.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-deb
+          if-no-files-found: error
+          retention-days: 7
+          path: dist/iirobot_${{ steps.ver.outputs.version }}_amd64.deb
+
+  release:
+    name: Publish GitHub Release
+    needs: [windows, macos-arm64, macos-intel, linux]
+    if: |
+      always() &&
+      needs.windows.result == 'success' &&
+      needs.macos-arm64.result == 'success' &&
+      (github.event_name == 'push' || inputs.publish)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: ver
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            V="${{ inputs.version }}"
+          else
+            V="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lh dist
+
+      - name: Write release notes
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          cat > release-notes.md <<EOF
+          ## IIRobot ${VERSION}
+
+          Настольный ассистент для производства: чат, задачи synx, ComfyUI,
+          локальный голосовой ввод.
+
+          ### Установщики
+
+          | Платформа | Файл |
+          |---|---|
+          | Windows 10/11 x64 | \`IIRobot-${VERSION}-Setup.exe\` |
+          | macOS Apple Silicon | \`IIRobot-${VERSION}-macOS-arm64.dmg\` |
+          | macOS Intel | \`IIRobot-${VERSION}-macOS-x86_64.dmg\` |
+          | Ubuntu / Linux Mint | \`iirobot_${VERSION}_amd64.deb\` |
+
+          ### macOS
+
+          1. Откройте DMG и перетащите **IIRobot** в **Applications**.
+          2. Первый запуск — ПКМ по иконке → **Открыть** → **Открыть**.
+             Приложение подписано ad-hoc (без нотаризации Apple), поэтому
+             Gatekeeper может заблокировать обычный двойной клик. Либо:
+             \`xattr -dr com.apple.quarantine /Applications/IIRobot.app\`
+          3. Настройки и данные: \`~/Library/Application Support/IIRobot\`.
+             ffmpeg/ffprobe уже внутри приложения.
+
+          ### Windows
+
+          Запустите \`IIRobot-${VERSION}-Setup.exe\` (права администратора не
+          нужны, ставится в профиль пользователя). SmartScreen может
+          предупредить о неизвестном издателе — «Подробнее» → «Выполнить всё
+          равно». В установщике можно сразу отметить голосовые модели и
+          локальную LLM для коррекции текста.
+
+          ### Linux
+
+          \`\`\`bash
+          sudo apt install ./iirobot_${VERSION}_amd64.deb
+          iirobot           # запуск
+          iirobot-setup     # доустановка голосовых моделей / LLM
+          \`\`\`
+
+          Полная документация — в [README](https://github.com/${GITHUB_REPOSITORY}#readme).
+          EOF
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          TAG="v${VERSION}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" --title "IIRobot ${VERSION}" --notes-file release-notes.md
+          else
+            gh release create "$TAG" dist/* \
+              --target "${GITHUB_SHA}" \
+              --title "IIRobot ${VERSION}" \
+              --notes-file release-notes.md
+          fi

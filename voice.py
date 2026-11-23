@@ -1,7 +1,7 @@
 """Local Russian voice input: streaming T-one partials + GigaAM final pass.
 
 Architecture:
-  arecord 16 kHz -> T-one streaming CTC (8 kHz) -> live partial text
+  capture 16 kHz -> T-one streaming CTC (8 kHz) -> live partial text
   release        -> GigaAM v3 e2e CTC (16 kHz) -> clean final text
                  -> optional LLM punctuation/term correction
 
@@ -204,7 +204,9 @@ class VoiceEngine:
     def start(self) -> dict[str, Any]:
         if not self.enabled():
             raise RuntimeError("голосовой ввод выключен")
-        windows = platform.system() == "Windows"
+        # Windows (WASAPI) и macOS (CoreAudio) пишут через sounddevice,
+        # Linux — через arecord (ALSA), чтобы не тянуть PortAudio.
+        use_sounddevice = platform.system() in ("Windows", "Darwin")
         with self._lock:
             if self._running:
                 return self.status()
@@ -215,14 +217,14 @@ class VoiceEngine:
             self._input_stream = None
             self._audio_q = queue.Queue(maxsize=200)
             device = str(self.cfg().get("audio_device") or "").strip()
-            if windows:
+            if use_sounddevice:
                 try:
-                    self._start_windows_capture(device)
+                    self._start_sounddevice_capture(device)
                 except Exception as exc:
                     self._status = "error"
                     self._error = str(exc)[:300]
                     raise RuntimeError(self._error)
-                target = self._reader_windows
+                target = self._reader_sounddevice
             else:
                 cmd = ["arecord", "-q", "-f", "S16_LE", "-r", "16000", "-c", "1", "-t", "raw"]
                 if device:
@@ -242,7 +244,7 @@ class VoiceEngine:
         # the final pass does not pay the model load time after release.
         self.warm_corrector()
         time.sleep(0.15)
-        if windows:
+        if use_sounddevice:
             if self._input_stream is None:
                 self._running = False
                 self._status = "error"
@@ -255,8 +257,8 @@ class VoiceEngine:
             raise RuntimeError(self._error)
         return self.status()
 
-    def _start_windows_capture(self, device: str) -> None:
-        """WASAPI capture through sounddevice (Windows only)."""
+    def _start_sounddevice_capture(self, device: str) -> None:
+        """Захват звука через sounddevice (WASAPI на Windows, CoreAudio на macOS)."""
         try:
             import sounddevice as sd
         except Exception as exc:
@@ -292,7 +294,7 @@ class VoiceEngine:
                     return
             self._process_chunk(chunk)
 
-    def _reader_windows(self) -> None:
+    def _reader_sounddevice(self) -> None:
         while True:
             with self._lock:
                 if not self._running:
