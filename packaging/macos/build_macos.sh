@@ -81,6 +81,7 @@ rm -rf "$APP_PATH" "$BUILD/pyinstaller"
   --collect-all sherpa_onnx \
   --collect-all reportlab \
   --collect-all webview \
+  --collect-all sounddevice \
   --hidden-import webview.platforms.cocoa \
   --hidden-import sounddevice \
   --hidden-import objc \
