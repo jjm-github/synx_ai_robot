@@ -58,7 +58,7 @@ Type: filesandordirs; Name: "{app}\__pycache__"
 
 [Code]
 var
-  LlmPage: TInputOptionPage;
+  LlmPage: TInputOptionWizardPage;
 
 procedure InitializeWizard;
 begin
