@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IIRobot — 4 навыка за 3 минуты</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ================= левая панель оглавления ================= -->
+  <aside class="toc" id="toc" aria-label="Оглавление презентации">
+    <div class="toc-head">
+      <div class="toc-brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-text"><b>IIRobot</b><small>4 навыка · 3 минуты</small></span>
+      </div>
+      <button class="toc-toggle" id="toc-toggle" type="button"
+              title="Свернуть оглавление (T)" aria-label="Свернуть оглавление" aria-expanded="true">‹</button>
+    </div>
+
+    <nav class="toc-list" id="toc-list"><!-- заполняется из .scene --></nav>
+
+    <div class="toc-foot">
+      <button class="play-btn" id="play-btn" type="button" title="Пауза (Space)" aria-label="Пауза">
+        <span class="play-icon" aria-hidden="true"></span>
+      </button>
+      <div class="toc-clock">
+        <span id="clock">0:00</span><span class="clock-sep">/</span><span id="clock-total">3:00</span>
+      </div>
+      <div class="toc-hint">← → сцены · Space пауза<br>T оглавление · F полный экран</div>
+    </div>
+  </aside>
+
+  <!-- ================= сцена ================= -->
+  <main class="stage" id="stage">
+    <div class="ambient" aria-hidden="true">
+      <div class="ambient-grid"></div>
+      <div class="orb orb-a"></div>
+      <div class="orb orb-b"></div>
+      <div class="grain"></div>
+      <div class="vignette"></div>
+    </div>
+
+    <div class="overall"><span id="overall-bar"></span></div>
+
+    <header class="topbar">
+      <div class="chapter">
+        <span class="chapter-num" id="chapter-num">01</span>
+        <span class="chapter-text">
+          <span class="chapter-kicker" id="chapter-kicker">Пролог</span>
+          <span class="chapter-title" id="chapter-title">Робот, который собирает серию</span>
+        </span>
+      </div>
+      <div class="topbar-right">
+        <span class="live-dot" aria-hidden="true"></span>
+        <span class="topbar-note">SYNX AI ROBOT · DEMO</span>
+      </div>
+    </header>
+
+    <div class="scenes" id="scenes">
+
+      <!-- 01 · интро · 12 с -->
+      <section class="scene scene-intro" data-title="Пролог" data-kicker="Пролог"
+               data-duration="12">
+        <div class="intro-robot a-scale" style="--d:.15s">
+          <div class="robot-ring"></div>
+          <div class="robot-ring ring-2"></div>
+          <svg class="robot" viewBox="0 0 200 220" role="img" aria-label="Робот">
+            <defs>
+              <linearGradient id="rg" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#f0a54a"/><stop offset="1" stop-color="#7fb7ff"/>
+              </linearGradient>
+            </defs>
+            <rect x="36" y="52" width="128" height="98" rx="30" fill="none" stroke="url(#rg)" stroke-width="2.5"/>
+            <circle cx="78" cy="98" r="9" fill="#f0a54a"/>
+            <circle cx="122" cy="98" r="9" fill="#7fb7ff"/>
+            <path d="M76 126c14 10 34 10 48 0" fill="none" stroke="#e9eef6" stroke-width="2.5" stroke-linecap="round"/>
+            <path d="M100 52V30" stroke="#e9eef6" stroke-width="2.5" stroke-linecap="round"/>
+            <circle cx="100" cy="24" r="6" fill="none" stroke="#f0a54a" stroke-width="2.5"/>
+            <path d="M36 82H22M164 82h14M36 118H22M164 118h14" stroke="url(#rg)" stroke-width="2.5" stroke-linecap="round"/>
+            <path d="M66 150v22h68v-22" fill="none" stroke="url(#rg)" stroke-width="2.5" stroke-linejoin="round"/>
+          </svg>
+          <span class="robot-shadow"></span>
+        </div>
+
+        <div class="intro-copy">
+          <div class="kicker a" style="--d:.05s">SYNX · ПРОДАКШН-АССИСТЕНТ</div>
+          <h1 class="intro-title">
+            <span class="a" style="--d:.18s">Не «нарисуй красиво».</span>
+            <span class="grad a" style="--d:.36s">А «собери серию».</span>
+          </h1>
+          <p class="lead a" style="--d:.58s">
+            Робот читает сценарий, переосмысляет его, создаёт ассеты мира
+            и режет сцену на шоты — с учётом того, что уже есть в проекте.
+          </p>
+          <div class="intro-chips">
+            <span class="chip a" style="--d:.72s">сценарий</span>
+            <span class="chip a" style="--d:.8s">локации</span>
+            <span class="chip a" style="--d:.88s">персонажи</span>
+            <span class="chip a" style="--d:.96s">реквизит</span>
+            <span class="chip a" style="--d:1.04s">шоты</span>
+            <span class="chip chip-accent a" style="--d:1.12s">связи и версии</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 02 · обзор навыков · 14 с -->
+      <section class="scene scene-skills" data-title="Что умеет робот" data-kicker="Обзор"
+               data-duration="14">
+        <div class="scene-head">
+          <div>
+            <div class="kicker a" style="--d:.05s">ОБЗОР</div>
+            <h2 class="a" style="--d:.14s">Четыре навыка, один диалог</h2>
+          </div>
+          <p class="head-note a" style="--d:.28s">
+            Каждый навык — не отдельная кнопка, а продолжение разговора:
+            робот помнит проект, связи и историю версий.
+          </p>
+        </div>
+
+        <div class="skill-grid">
+          <article class="skill-card a" style="--d:.28s">
+            <span class="skill-num">01</span>
+            <h3>Переосмысление сценария</h3>
+            <p>Находит, что не работает в раскадровке, и предлагает другое покрытие сцены.</p>
+            <div class="skill-visual visual-script" aria-hidden="true">
+              <div class="vs-ui"><img src="img/ui-scenario.png" alt=""></div>
+              <div class="vs-strip">
+                <img src="img/shot-70.jpg" alt="">
+                <img src="img/shot-83.jpg" alt="">
+                <img src="img/shot-109.jpg" alt="">
+              </div>
+            </div>
+          </article>
+
+          <article class="skill-card a" style="--d:.42s">
+            <span class="skill-num">02</span>
+            <h3>Ассеты мира</h3>
+            <p>Локации, персонажи и реквизит — в едином арт-дирекшне и с нужных ракурсов.</p>
+            <div class="skill-visual visual-assets" aria-hidden="true">
+              <img src="img/loc-fog.jpg" alt="">
+              <img src="img/char-helga.jpg" alt="">
+              <img src="img/prop-passport-front.jpg" alt="">
+            </div>
+          </article>
+
+          <article class="skill-card a" style="--d:.56s">
+            <span class="skill-num">03</span>
+            <h3>Расшот по сценарию</h3>
+            <p>Режет сцену на планы и ракурсы: общий, средний, деталь — по тому, что происходит.</p>
+            <div class="skill-visual visual-shots" aria-hidden="true">
+              <img src="img/shot-83.jpg" alt="">
+              <img src="img/shot-70.jpg" alt="">
+              <img src="img/shot-109.jpg" alt="">
+            </div>
+          </article>
+
+          <article class="skill-card a" style="--d:.7s">
+            <span class="skill-num">04</span>
+            <h3>Связанные ассеты</h3>
+            <p>Проставляет связи шотов с локациями, героями и реквизитом и сверяет с API.</p>
+            <div class="skill-visual visual-links" aria-hidden="true">
+              <svg viewBox="0 0 300 280" preserveAspectRatio="xMidYMid meet">
+                <g fill="none" stroke="rgba(240,165,74,.55)" stroke-width="1.2" stroke-dasharray="4 5">
+                  <path d="M82 132 C96 132 96 52 112 52"/>
+                  <path d="M82 138 C96 138 96 138 112 138"/>
+                  <path d="M82 144 C96 144 96 224 112 224"/>
+                  <path d="M176 52 C190 52 190 52 206 52"/>
+                  <path d="M176 138 C190 138 190 138 206 138"/>
+                  <path d="M176 224 C190 224 190 224 206 224"/>
+                </g>
+                <g stroke="rgba(127,183,255,.5)" stroke-width="1" fill="none">
+                  <path d="M164 52v172M164 52v-20M164 224v20" stroke="rgba(255,255,255,.07)"/>
+                </g>
+                <g font-family="inherit" font-size="10">
+                  <rect x="4" y="116" width="78" height="44" rx="9" fill="rgba(127,183,255,.08)" stroke="rgba(127,183,255,.5)"/>
+                  <text x="43" y="135" fill="#dfe8f4" text-anchor="middle" font-size="9">Сценарий</text>
+                  <text x="43" y="149" fill="#8d99a9" text-anchor="middle" font-size="8">14 секвенций</text>
+
+                  <rect x="112" y="34" width="64" height="36" rx="8" fill="rgba(255,255,255,.04)" stroke="rgba(255,255,255,.16)"/>
+                  <text x="144" y="56" fill="#dfe8f4" text-anchor="middle" font-size="9">шоты</text>
+                  <rect x="112" y="120" width="64" height="36" rx="8" fill="rgba(255,255,255,.04)" stroke="rgba(255,255,255,.16)"/>
+                  <text x="144" y="142" fill="#dfe8f4" text-anchor="middle" font-size="9">планы</text>
+                  <rect x="112" y="206" width="64" height="36" rx="8" fill="rgba(255,255,255,.04)" stroke="rgba(255,255,255,.16)"/>
+                  <text x="144" y="228" fill="#dfe8f4" text-anchor="middle" font-size="9">ракурсы</text>
+
+                  <rect x="206" y="32" width="90" height="40" rx="8" fill="rgba(240,165,74,.10)" stroke="rgba(240,165,74,.5)"/>
+                  <text x="251" y="56" fill="#f4c084" text-anchor="middle" font-size="9">локации ×6</text>
+                  <rect x="206" y="118" width="90" height="40" rx="8" fill="rgba(240,165,74,.10)" stroke="rgba(240,165,74,.5)"/>
+                  <text x="251" y="142" fill="#f4c084" text-anchor="middle" font-size="9">персонажи ×6</text>
+                  <rect x="206" y="204" width="90" height="40" rx="8" fill="rgba(240,165,74,.10)" stroke="rgba(240,165,74,.5)"/>
+                  <text x="251" y="228" fill="#f4c084" text-anchor="middle" font-size="9">реквизит ×14</text>
+                </g>
+                <g fill="#f0a54a">
+                  <circle cx="82" cy="138" r="3.5"/>
+                  <circle cx="176" cy="52" r="2.6"/>
+                  <circle cx="176" cy="138" r="2.6"/>
+                  <circle cx="176" cy="224" r="2.6"/>
+                </g>
+              </svg>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- 03 · сценарий · 28 с -->
+      <section class="scene scene-script" data-title="Переосмысление сценария" data-kicker="Навык 01"
+               data-duration="28">
+        <div class="split split-script">
+          <div class="split-copy">
+            <div class="kicker a" style="--d:.05s">НАВЫК 01 · СЦЕНАРИЙ</div>
+            <h2 class="a" style="--d:.14s">Сначала понять,<br>что именно не так</h2>
+            <p class="lead a" style="--d:.3s">
+              Робот разбирает не «картинки», а драматургию: кто в кадре,
+              зачем этот план и как сцена монтируется.
+            </p>
+
+            <ol class="steps">
+              <li class="a" style="--d:.46s"><b>Читает</b> сценарий, ТЗ и связи шотов
+                с локациями и персонажами.</li>
+              <li class="a" style="--d:.62s"><b>Находит</b> провалы: одинаковые планы,
+                герои «за кадром», ложные связи.</li>
+              <li class="a" style="--d:.78s"><b>Пересобирает</b> раскадровку: планы,
+                ракурсы, участники — по монтажу.</li>
+            </ol>
+
+            <blockquote class="quote a" style="--d:1s">
+              «Тебе нужно не „разные картинки“,<br>а раскадровка»
+            </blockquote>
+            <div class="quote-src a" style="--d:1.12s">из диалога с роботом</div>
+          </div>
+
+          <figure class="shot-frame frame-ui a-right" style="--d:.34s">
+            <div class="frame-bar"><span></span><span></span><span></span><em>IIRobot · Чат</em></div>
+            <div class="frame-img">
+              <img src="img/ui-scenario.png" alt="Разбор сценария в чате IIRobot">
+              <span class="scan"></span>
+              <span class="overlay-box box-a"></span>
+              <span class="overlay-box box-b"></span>
+            </div>
+            <figcaption class="tag tag-a">Разбор задачи</figcaption>
+            <figcaption class="tag tag-b">Что не так с S01</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <!-- 04 · локации · 24 с -->
+      <section class="scene scene-locations" data-title="Ассеты: локации" data-kicker="Навык 02"
+               data-duration="24">
+        <div class="scene-head">
+          <div>
+            <div class="kicker a" style="--d:.05s">НАВЫК 02 · АССЕТЫ</div>
+            <h2 class="a" style="--d:.14s">Локации: один мир,<br>много ракурсов</h2>
+          </div>
+          <p class="head-note a" style="--d:.3s">
+            Не «красивый фон», а съёмочная площадка: общий план, обратный,
+            детали и предметы, которые держат сцену.
+          </p>
+        </div>
+
+        <div class="loc-grid">
+          <figure class="loc loc-main a-scale" style="--d:.34s">
+            <img src="img/loc-fog.jpg" alt="Туманная площадь у здания" class="kb">
+            <figcaption><b>Туман снаружи</b><span>общий план · атмосфера</span></figcaption>
+          </figure>
+          <figure class="loc a-scale" style="--d:.44s">
+            <img src="img/loc-basement.jpg" alt="Подвальная аудитория" class="kb">
+            <figcaption><b>Подвал</b><span>разрушенный класс</span></figcaption>
+          </figure>
+          <figure class="loc a-scale" style="--d:.54s">
+            <img src="img/loc-vestibule.jpg" alt="Вестибюль" class="kb">
+            <figcaption><b>Вестибюль</b><span>мрамор · ночь</span></figcaption>
+          </figure>
+          <figure class="loc a-scale" style="--d:.64s">
+            <img src="img/loc-side.jpg" alt="Боковая комната" class="kb">
+            <figcaption><b>Боковая комната</b><span>обратный ракурс</span></figcaption>
+          </figure>
+          <figure class="loc loc-detail a-scale" style="--d:.74s">
+            <img src="img/loc-clock.jpg" alt="Часы в вестибюле" class="kb">
+            <figcaption><b>Часы</b><span>23:55 · деталь</span></figcaption>
+          </figure>
+          <figure class="loc loc-detail a-scale" style="--d:.84s">
+            <img src="img/loc-reagents.jpg" alt="Реагенты в подвале" class="kb">
+            <figcaption><b>Реагенты</b><span>предметы сцены</span></figcaption>
+          </figure>
+        </div>
+
+        <div class="strip-note a" style="--d:1s">
+          <span class="dot"></span>
+          Одна локация — до пяти ракурсов. Каждый следующий кадр остаётся в том же мире.
+        </div>
+      </section>
+
+      <!-- 05 · персонажи · 24 с -->
+      <section class="scene scene-characters" data-title="Ассеты: персонажи" data-kicker="Навык 02"
+               data-duration="24">
+        <div class="scene-head">
+          <div>
+            <div class="kicker a" style="--d:.05s">НАВЫК 02 · АССЕТЫ</div>
+            <h2 class="a" style="--d:.14s">Персонажи: лицо, костюм, силуэт</h2>
+          </div>
+          <p class="head-note a" style="--d:.3s">
+            Hero-кадр задаёт характер, turnaround фиксирует костюм и пропорции —
+            чтобы герой не «плыл» между шотами.
+          </p>
+        </div>
+
+        <div class="char-grid">
+          <article class="char a char-1" style="--d:.34s">
+            <div class="char-hero"><img src="img/char-arthur.jpg" alt="Артур — hero-кадр" class="kb"></div>
+            <div class="char-card">
+              <div class="char-name">Артур</div>
+              <div class="char-tags"><span>hero</span><span>turnaround</span><span>close-up</span></div>
+              <img class="char-turn" src="img/char-arthur-turn.jpg" alt="Артур — turnaround">
+            </div>
+          </article>
+
+          <article class="char a char-2" style="--d:.48s">
+            <div class="char-hero"><img src="img/char-helga.jpg" alt="Хельга Вольк — hero-кадр" class="kb"></div>
+            <div class="char-card">
+              <div class="char-name">Хельга Вольк</div>
+              <div class="char-tags"><span>hero</span><span>turnaround</span><span>close-up</span></div>
+              <img class="char-turn" src="img/char-helga-turn.jpg" alt="Хельга Вольк — turnaround">
+            </div>
+          </article>
+
+          <article class="char a char-3" style="--d:.62s">
+            <div class="char-hero"><img src="img/char-gromov.jpg" alt="Громов — hero-кадр" class="kb"></div>
+            <div class="char-card">
+              <div class="char-name">Громов</div>
+              <div class="char-tags"><span>hero</span><span>close-up</span></div>
+              <img class="char-turn char-turn-close" src="img/char-gromov-close.jpg" alt="Громов — крупный план">
+            </div>
+          </article>
+        </div>
+
+        <div class="strip-note a" style="--d:.8s">
+          <span class="dot"></span>
+          Один персонаж — несколько состояний: портрет, полный рост, разворот, крупный план.
+        </div>
+      </section>
+
+      <!-- 06 · реквизит · 20 с -->
+      <section class="scene scene-props" data-title="Ассеты: реквизит" data-kicker="Навык 02"
+               data-duration="20">
+        <div class="scene-head">
+          <div>
+            <div class="kicker a" style="--d:.05s">НАВЫК 02 · АССЕТЫ</div>
+            <h2 class="a" style="--d:.14s">Реквизит: предмет с историей</h2>
+          </div>
+          <p class="head-note a" style="--d:.3s">
+            Вещь должна читаться в кадре крупным планом и совпадать
+            в каждом появлении — как паспорт Иоанна IV.
+          </p>
+        </div>
+
+        <div class="prop-grid">
+          <figure class="prop prop-main a-scale" style="--d:.34s">
+            <img src="img/prop-passport-close.jpg" alt="Паспорт Иоанна IV — крупный план" class="kb">
+            <figcaption>
+              <b>Паспорт Иоанна IV</b>
+              <span>5 ракурсов: front · 3/4 · close · profile · back</span>
+            </figcaption>
+            <span class="prop-badge">5 ракурсов</span>
+          </figure>
+
+          <div class="prop-views">
+            <figure class="prop a-scale" style="--d:.46s"><img src="img/prop-passport-front.jpg" alt="Паспорт — фронт"></figure>
+            <figure class="prop a-scale" style="--d:.56s"><img src="img/prop-passport-34.jpg" alt="Паспорт — три четверти"></figure>
+            <figure class="prop prop-clock a-scale" style="--d:.66s">
+              <img src="img/loc-clock.jpg" alt="Часы в вестибюле">
+              <figcaption><b>Часы · 23:55</b><span>держат время сцены</span></figcaption>
+            </figure>
+            <figure class="prop prop-paint a-scale" style="--d:.76s">
+              <img src="img/prop-painting.jpg" alt="Портрет Иоанна IV">
+              <figcaption><b>Портрет</b><span>картина в кадре</span></figcaption>
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <!-- 07 · расшот · 26 с -->
+      <section class="scene scene-shots" data-title="Расшот по сценарию" data-kicker="Навык 03"
+               data-duration="26">
+        <div class="scene-head">
+          <div>
+            <div class="kicker a" style="--d:.05s">НАВЫК 03 · РАСШОТ</div>
+            <h2 class="a" style="--d:.14s">Покрытие сцены, а не нарезка</h2>
+          </div>
+          <p class="head-note a" style="--d:.3s">
+            Робот предлагает планы и ракурсы под действие: где нужен общий,
+            где — средний, а где взгляд героя.
+          </p>
+        </div>
+
+        <div class="storyboard">
+          <figure class="frame a-scale" style="--d:.34s">
+            <img src="img/shot-83.jpg" alt="Общий план аудитории">
+            <figcaption><span class="plan">общий</span> Аудитория · герой входит</figcaption>
+          </figure>
+          <figure class="frame a-scale" style="--d:.46s">
+            <img src="img/shot-70.jpg" alt="Средний план героя">
+            <figcaption><span class="plan">средний</span> Герой садится за парту</figcaption>
+          </figure>
+          <figure class="frame a-scale" style="--d:.58s">
+            <img src="img/shot-109.jpg" alt="Групповой план сцены">
+            <figcaption><span class="plan">групповой</span> Разговор в проходе</figcaption>
+          </figure>
+          <span class="scan-line" aria-hidden="true"></span>
+        </div>
+
+        <div class="shot-analysis">
+          <div class="shot-table a" style="--d:.72s">
+            <div class="shot-row shot-head">
+              <span>Секв.</span><span>Локация</span><span>Что в кадре</span>
+            </div>
+            <div class="shot-row">
+              <span class="seq">S01</span>
+              <span><code>loc_central_hall_argus</code> ×15</span>
+              <span class="chips-mini">
+                <i>dome_screen ×5</i><i>analyst_terminal ×5</i><i>confetti ×4</i>
+                <i>coffee_cup ×3</i><i>Элара ×9</i><i>Финн ×6</i>
+              </span>
+            </div>
+            <div class="shot-row">
+              <span class="seq">S02</span>
+              <span><code>loc_analysis_center</code> ×15</span>
+              <span class="chips-mini">
+                <i>hologram_projector ×4</i><i>server_rack ×2</i><i>leak_pipe</i>
+                <i>corridor ×1</i><i>все четверо</i>
+              </span>
+            </div>
+            <div class="shot-row">
+              <span class="seq">S03</span>
+              <span><code>loc_corridor_elara_office</code> ×12</span>
+              <span class="chips-mini">
+                <i>elara_desk_lamp ×6</i><i>glass_wall ×2</i><i>coffee_cup</i>
+              </span>
+            </div>
+          </div>
+
+          <div class="plan-notes">
+            <div class="plan-note a" style="--d:.84s"><b>общий</b><span>где мы, как устроено пространство и путь героя</span></div>
+            <div class="plan-note a" style="--d:.92s"><b>средний</b><span>что делает герой и в каком он состоянии</span></div>
+            <div class="plan-note a" style="--d:1s"><b>групповой</b><span>кто с кем в кадре и как меняются отношения</span></div>
+          </div>
+        </div>
+
+        <div class="shot-stats">
+          <div class="stat a" style="--d:1s"><b>14</b><span>секвенций</span></div>
+          <div class="stat a" style="--d:1.07s"><b>94</b><span>шота</span></div>
+          <div class="stat a" style="--d:1.14s"><b>26</b><span>ассетов</span></div>
+          <div class="stat a" style="--d:1.21s"><b>6</b><span>локаций</span></div>
+        </div>
+
+        <div class="strip-note a" style="--d:1.3s">
+          <span class="dot"></span>
+          Расшот связан со сценарием: каждый кадр знает свою локацию и участников.
+        </div>
+      </section>
+
+      <!-- 08 · связи · 20 с -->
+      <section class="scene scene-links" data-title="Связанные ассеты" data-kicker="Навык 04"
+               data-duration="20">
+        <div class="split split-links">
+          <div class="split-copy">
+            <div class="kicker a" style="--d:.05s">НАВЫК 04 · СВЯЗИ</div>
+            <h2 class="a" style="--d:.14s">Всё связано.<br>Всё проверено.</h2>
+            <p class="lead a" style="--d:.3s">
+              Робот проставляет <code>linked assets</code> у шотов, а потом
+              сверяет результат с API проекта — без «на глаз».
+            </p>
+
+            <div class="pipeline">
+              <div class="pipe-node a" style="--d:.46s"><span>01</span>Сценарий</div>
+              <div class="pipe-node a" style="--d:.56s"><span>02</span>Секвенции</div>
+              <div class="pipe-node a" style="--d:.66s"><span>03</span>Шоты</div>
+              <div class="pipe-node pipe-accent a" style="--d:.76s"><span>04</span>Ассеты: локация · персонаж · реквизит</div>
+              <div class="pipe-node a" style="--d:.86s"><span>05</span>Версии и публикация</div>
+              <div class="pipe-pulse" aria-hidden="true"></div>
+            </div>
+
+            <div class="verify a" style="--d:1s">
+              <b>94 / 94</b>
+              <span>шотов связаны · расхождений 0</span>
+            </div>
+          </div>
+
+          <figure class="shot-frame frame-ui frame-tilt a-right" style="--d:.34s">
+            <div class="frame-bar"><span></span><span></span><span></span><em>IIRobot · связи шотов</em></div>
+            <div class="frame-img">
+              <img src="img/ui-linked.png" alt="Связанные ассеты шотов в IIRobot">
+              <span class="scan"></span>
+            </div>
+          </figure>
+        </div>
+      </section>
+
+      <!-- 09 · финал · 12 с -->
+      <section class="scene scene-final" data-title="Финал" data-kicker="Финал"
+               data-duration="12">
+        <div class="final-wrap">
+          <div class="final-robot a-scale" style="--d:.1s">
+            <svg viewBox="0 0 200 220" aria-hidden="true">
+              <rect x="36" y="52" width="128" height="98" rx="30" fill="none" stroke="url(#rg)" stroke-width="2.5"/>
+              <circle cx="78" cy="98" r="9" fill="#f0a54a"/>
+              <circle cx="122" cy="98" r="9" fill="#7fb7ff"/>
+              <path d="M76 126c14 10 34 10 48 0" fill="none" stroke="#e9eef6" stroke-width="2.5" stroke-linecap="round"/>
+              <path d="M100 52V30" stroke="#e9eef6" stroke-width="2.5" stroke-linecap="round"/>
+              <circle cx="100" cy="24" r="6" fill="none" stroke="#f0a54a" stroke-width="2.5"/>
+            </svg>
+          </div>
+          <div class="kicker a" style="--d:.15s">3 МИНУТЫ · 4 НАВЫКА</div>
+          <h2 class="final-title a" style="--d:.26s">Сценарий → ассеты → шоты → связи</h2>
+          <p class="lead final-lead a" style="--d:.4s">
+            Один робот ведёт проект от текста до версий в synx.
+            Осталось начать диалог.
+          </p>
+          <div class="final-actions a" style="--d:.56s">
+            <button class="btn-replay" id="replay" type="button">Смотреть заново</button>
+            <span class="final-meta">IIRobot 1.0.0 · <code>github.com/jjm-github/synx_ai_robot</code></span>
+          </div>
+          <div class="final-note a" style="--d:.72s">
+            Навыки связаны между собой: связи, которые робот проставил на прошлом шаге,
+            становятся контекстом для следующего.
+          </div>
+        </div>
+        <div class="final-rings" aria-hidden="true"><span></span><span></span><span></span></div>
+      </section>
+
+    </div>
+
+    <div class="paused-badge" id="paused-badge">Пауза · Space</div>
+
+    <footer class="hintbar">
+      <span class="hintbar-brand"><span class="brand-mark small"></span> IIRobot</span>
+      <span class="hintbar-text">← → сцены · Space пауза · T оглавление · F полный экран</span>
+      <span class="hintbar-right" id="hintbar-right">01 / 09</span>
+    </footer>
+  </main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
