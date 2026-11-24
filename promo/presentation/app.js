@@ -82,6 +82,7 @@
 
   function goTo(index, opts = {}) {
     const next = Math.max(0, Math.min(lastIndex, index));
+    document.body.classList.remove("is-ended");
     const restart = opts.restart !== false;
     const keepPaused = opts.keepPaused !== false;
 
@@ -116,6 +117,9 @@
 
   function finish() {
     state.ended = true;
+    document.body.classList.add("is-ended");
+    playBtn.title = "Смотреть заново (Space)";
+    playBtn.setAttribute("aria-label", "Смотреть заново");
     state.elapsed = durations[lastIndex];
     renderProgress();
     renderClock();
