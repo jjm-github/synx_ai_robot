@@ -43,11 +43,16 @@ chmod +x "$PKGROOT/opt/iirobot/run.sh" "$PKGROOT/opt/iirobot/install.sh" 2>/dev/
 
 log "Скачиваю Python wheels (offline install)"
 mkdir -p "$WHEELS"
-python3 -m pip download -r "$ROOT/requirements.txt" -d "$WHEELS" >/dev/null
-# proxy-tools is published only as an sdist; build it into a wheel so that
-# postinst can use --no-index without build isolation.
-python3 -m pip wheel --no-deps -w "$WHEELS" proxy-tools==0.1.0 >/dev/null
-rm -f "$WHEELS"/proxy_tools-*.tar.gz
+if [ -n "${WHEELS_SRC:-}" ] && [ -d "$WHEELS_SRC" ]; then
+  cp -a "$WHEELS_SRC"/. "$WHEELS"/
+  log "Использую кэш wheels: $WHEELS_SRC"
+else
+  python3 -m pip download -r "$ROOT/requirements.txt" -d "$WHEELS" >/dev/null
+  # proxy-tools is published only as an sdist; build it into a wheel so that
+  # postinst can use --no-index without build isolation.
+  python3 -m pip wheel --no-deps -w "$WHEELS" proxy-tools==0.1.0 >/dev/null
+  rm -f "$WHEELS"/proxy_tools-*.tar.gz
+fi
 ok "Wheels: $(du -sh "$WHEELS" | cut -f1)"
 
 # ---------------------------------------------------------------- launcher --
