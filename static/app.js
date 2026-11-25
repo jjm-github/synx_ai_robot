@@ -805,12 +805,17 @@
   }
   // ---------- local voice input (hold to talk) ----------
   var VOICE_MIC_SVG = '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 0 0 3.5-3.5V6a3.5 3.5 0 1 0-7 0v6a3.5 3.5 0 0 0 3.5 3.5Zm6-3.5a6 6 0 0 1-12 0M12 18v3m-3 0h6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+  var VOICE_BRAIN_SVG = '<svg class="brain-pulse" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">' +
+    '<path d="M12 4.2c-2.1 0-3.8 1.1-4.5 2.7-1.6.2-2.8 1.5-2.8 3.1 0 .8.3 1.5.8 2.1-.7.6-1.1 1.5-1.1 2.5 0 1.8 1.5 3.3 3.3 3.3.4 0 .8-.1 1.2-.2.7 1 1.8 1.6 3.1 1.6V4.2Z" fill="#7fb7ff"/>' +
+    '<path d="M12 4.2c2.1 0 3.8 1.1 4.5 2.7 1.6.2 2.8 1.5 2.8 3.1 0 .8-.3 1.5-.8 2.1.7.6 1.1 1.5 1.1 2.5 0 1.8-1.5 3.3-3.3 3.3-.4 0-.8-.1-1.2-.2-.7 1-1.8 1.6-3.1 1.6V4.2Z" fill="#f0a54a"/>' +
+    '<path d="M12 4.2v15.5M8 9.5c1 .2 1.7.8 2 1.8M16 9.5c-1 .2-1.7.8-2 1.8M7.6 14.5c1 .5 1.8.5 2.7.1M16.4 14.5c-1 .5-1.8.5-2.7.1" fill="none" stroke="rgba(8,10,13,.5)" stroke-width="1.1" stroke-linecap="round"/>' +
+    '</svg>';
   function voiceIcon(mode) {
     var btn = $("voice-btn");
     if (!btn) return;
     btn.classList.toggle("recording", mode === "recording");
     btn.classList.toggle("thinking", mode === "thinking");
-    btn.innerHTML = VOICE_MIC_SVG;
+    btn.innerHTML = mode === "thinking" ? VOICE_BRAIN_SVG : VOICE_MIC_SVG;
     btn.disabled = mode === "thinking";
     btn.title = mode === "thinking" ? "Идёт коррекция текста…" :
       (mode === "recording" ? "Говорите…" : "Голосовой ввод: удерживайте");
