@@ -323,10 +323,13 @@ textarea.chat-input {
   background: var(--field-bg); color: var(--ink); cursor: pointer;
   display: inline-grid; place-items: center; flex: 0 0 auto;
 }
-.chat-tool:hover { border-color: var(--accent-soft-line); background: var(--hover); color: var(--text); }
+.chat-tool:hover:not(.recording):not(.thinking) {
+  border-color: var(--accent-soft-line);
+  background: color-mix(in srgb, var(--field-bg) 88%, var(--text) 12%);
+  color: var(--text);
+}
 .chat-tool:disabled { opacity: .45; cursor: default; }
 .chat-send { background: var(--field-bg); border-color: var(--line2); color: var(--ink); }
-.chat-send:hover { background: var(--hover); }
 .chat-send svg, .voice-btn svg { display: block; }
 
 .chat-splitter {
@@ -665,8 +668,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 /* Voice input: hold to talk */
 .voice-btn.hidden { display: none; }
 .voice-btn { position: relative; }
-.voice-btn.recording { background: var(--field-bg); border-color: #3b82f6; color: #3b82f6; }
-.voice-btn.thinking { background: var(--field-bg); border-color: var(--line2); color: var(--ink); }
+.voice-btn.recording { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+.voice-btn.thinking { background: #ffd43b; border-color: #ffd43b; color: #171717; }
 .voice-btn.thinking .brain-pulse { animation: voice-pulse 1.1s ease-in-out infinite; transform-origin: 50% 50%; }
 @keyframes voice-pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.1); } }
 @keyframes voice-blink { 0%,100% { box-shadow: 0 0 0 0 rgba(245,197,66,.65); } 50% { box-shadow: 0 0 0 7px rgba(245,197,66,0); } }
