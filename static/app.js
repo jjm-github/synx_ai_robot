@@ -209,7 +209,7 @@
         '<div class="job-log-head"><span>Действие</span><span>вход</span><span>выход</span></div>' +
         progressRows.join("") + '</div></details>' : "";
       var playlist = m.playlist_text ? '<div class="playlist-card"><div class="playlist-card-head"><b>Плейлист Synx</b><button class="btn" data-copy-playlist>Скопировать</button></div><details><summary>Показать текст плейлиста</summary><pre>' + esc(m.playlist_text) + '</pre></details></div>' : "";
-      wrap.innerHTML = '<div class="msg-avatar">' + (isUser ? "Я" : "AI") + '</div><div class="msg-bubble">' + textHtml + imgHtml + filesHtml + progressHtml + playlist + usage + "</div>";
+      wrap.innerHTML = '<div class="msg-avatar">' + (isUser ? "a" : "ii") + '</div><div class="msg-bubble">' + textHtml + imgHtml + filesHtml + progressHtml + playlist + usage + "</div>";
       box.appendChild(wrap);
     });
     box.querySelectorAll(".msg-text code").forEach(function (c) {
@@ -618,7 +618,7 @@
     var files = refs.filter(function (im) { return !isImageRef(im); });
     var imgHtml = imgs.map(function (im) { return '<img src="' + esc(im.url) + '" data-chat-image="1" alt="">'; }).join("");
     var filesHtml = files.length ? '<div class="msg-files">' + files.map(chatFileHtml).join("") + '</div>' : "";
-    wrap.innerHTML = '<div class="msg-avatar">Я</div><div class="msg-bubble"><div class="msg-text">' + esc(text || "").replace(/\n/g, "<br>") + '</div>' +
+    wrap.innerHTML = '<div class="msg-avatar">a</div><div class="msg-bubble"><div class="msg-text">' + esc(text || "").replace(/\n/g, "<br>") + '</div>' +
       (imgHtml ? '<div class="msg-images">' + imgHtml + '</div>' : "") + filesHtml + '</div>';
     box.appendChild(wrap); box.scrollTop = box.scrollHeight;
     return wrap;
@@ -629,7 +629,7 @@
     var wrap = document.createElement("div");
     wrap.className = "msg assistant" + (expanded ? "" : " thinking-collapsed");
     wrap.id = "chat-thinking";
-    wrap.innerHTML = '<div class="msg-avatar">AI</div><div class="msg-bubble">' +
+    wrap.innerHTML = '<div class="msg-avatar">ii</div><div class="msg-bubble">' +
       '<div class="thinking-row" id="thinking-toggle" title="Показать или скрыть шаги">' +
       '<span class="thinking-dots"><i></i><i></i><i></i></span>' +
       '<span id="thinking-text">Анализирую запрос...</span>' +

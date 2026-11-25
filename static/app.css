@@ -320,16 +320,16 @@ textarea.chat-input {
 .chat-input-tools.right { left: auto; right: 4px; justify-content: flex-end; }
 .chat-tool {
   width: 24px; height: 24px; padding: 0; border: 1px solid var(--line2); border-radius: 5px;
-  background: var(--field-bg); color: var(--ink); cursor: pointer;
+  background: var(--panel); color: var(--ink); cursor: pointer;
   display: inline-grid; place-items: center; flex: 0 0 auto;
 }
 .chat-tool:hover:not(.recording):not(.thinking) {
   border-color: var(--accent-soft-line);
-  background: color-mix(in srgb, var(--field-bg) 88%, var(--text) 12%);
+  background: color-mix(in srgb, var(--panel) 88%, var(--text) 12%);
   color: var(--text);
 }
 .chat-tool:disabled { opacity: .45; cursor: default; }
-.chat-send { background: var(--field-bg); border-color: var(--line2); color: var(--ink); }
+.chat-send { background: var(--panel); border-color: var(--line2); color: var(--ink); }
 .chat-send svg, .voice-btn svg { display: block; }
 
 .chat-splitter {
