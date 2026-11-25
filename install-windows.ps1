@@ -1,7 +1,7 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-  IIRobot installer for Windows 10/11 (per-user, no admin required).
+  iiRobot installer for Windows 10/11 (per-user, no admin required).
 
 .DESCRIPTION
   Installs Python if needed, creates .venv, installs Python dependencies,
@@ -302,7 +302,7 @@ function Create-Shortcut([string]$Path, [string]$Target, [string]$Arguments, [st
     $shortcut.Arguments = $Arguments
     $shortcut.WorkingDirectory = $WorkDir
     $shortcut.IconLocation = $Icon
-    $shortcut.Description = "IIRobot production assistant"
+    $shortcut.Description = "iiRobot production assistant"
     $shortcut.Save()
 }
 
@@ -314,13 +314,13 @@ if ([Environment]::OSVersion.Version.Major -lt 10) {
     Fail "Windows 10 or 11 is required."
 }
 
-$script:DataDir = if ($env:IIROBOT_DATA_DIR) { $env:IIROBOT_DATA_DIR } else { Join-Path $env:LOCALAPPDATA "IIRobot\data" }
-$script:ConfigDir = if ($env:IIROBOT_CONFIG) { Split-Path -Parent $env:IIROBOT_CONFIG } else { Join-Path $env:APPDATA "IIRobot" }
+$script:DataDir = if ($env:IIROBOT_DATA_DIR) { $env:IIROBOT_DATA_DIR } else { Join-Path $env:LOCALAPPDATA "iiRobot\data" }
+$script:ConfigDir = if ($env:IIROBOT_CONFIG) { Split-Path -Parent $env:IIROBOT_CONFIG } else { Join-Path $env:APPDATA "iiRobot" }
 $script:ConfigFile = Join-Path $script:ConfigDir "config.json"
 $script:BotsFile = Join-Path $script:ConfigDir "bots.json"
 $script:PromptFile = Join-Path $script:ConfigDir "system.md"
 $script:McpFile = Join-Path $script:ConfigDir "mcp_servers.json"
-$script:ToolsDir = if ($ToolsDir) { $ToolsDir } else { Join-Path $env:LOCALAPPDATA "IIRobot\tools" }
+$script:ToolsDir = if ($ToolsDir) { $ToolsDir } else { Join-Path $env:LOCALAPPDATA "iiRobot\tools" }
 New-Item -ItemType Directory -Path $script:DataDir, $script:ConfigDir, $script:ToolsDir -Force | Out-Null
 
 foreach ($pair in @(
@@ -336,7 +336,7 @@ foreach ($pair in @(
 }
 
 if (-not $AppDir) {
-    $AppDir = if ($FromSetup) { Split-Path -Parent $PSScriptRoot } else { Join-Path $env:LOCALAPPDATA "IIRobot\app" }
+    $AppDir = if ($FromSetup) { Split-Path -Parent $PSScriptRoot } else { Join-Path $env:LOCALAPPDATA "iiRobot\app" }
 }
 $AppDir = [IO.Path]::GetFullPath($AppDir)
 
@@ -450,16 +450,16 @@ if (-not $NoShortcuts) {
     New-Item -ItemType Directory -Path $startMenu -Force | Out-Null
     $target = if (Test-Path $vpw) { $vpw } else { $vpy }
     $args = '"' + (Join-Path $AppDir "main.py") + '"'
-    Create-Shortcut (Join-Path $desktop "IIRobot.lnk") $target $args $AppDir $icon
-    Create-Shortcut (Join-Path $startMenu "IIRobot.lnk") $target $args $AppDir $icon
+    Create-Shortcut (Join-Path $desktop "iiRobot.lnk") $target $args $AppDir $icon
+    Create-Shortcut (Join-Path $startMenu "iiRobot.lnk") $target $args $AppDir $icon
     Ok "Shortcuts created"
 }
 
 Write-Host ""
-Log "IIRobot installed"
+Log "iiRobot installed"
 Write-Host "  Application: $AppDir"
 Write-Host "  Data:        $script:DataDir"
 Write-Host "  Config:      $script:ConfigFile"
-Write-Host "  Launch:      Start menu / Desktop -> IIRobot"
+Write-Host "  Launch:      Start menu / Desktop -> iiRobot"
 Write-Host ""
 Write-Host "ComfyUI is installed separately; set its URL in Settings."

@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# Собирает macOS-установщик: dist/IIRobot-<version>-macOS-<arch>.dmg
+# Собирает macOS-установщик: dist/iiRobot-<version>-macOS-<arch>.dmg
 #
 #   ./packaging/macos/build_macos.sh
 #   VERSION=1.1.0 ./packaging/macos/build_macos.sh
 #
 # Требуется macOS с Python 3.12 и Xcode Command Line Tools (sips, iconutil,
 # hdiutil, codesign). Скрипт ставит зависимости и PyInstaller в текущий
-# интерпретатор, собирает IIRobot.app, кладёт внутрь ffmpeg/ffprobe и
+# интерпретатор, собирает iiRobot.app, кладёт внутрь ffmpeg/ffprobe и
 # упаковывает всё в DMG с ярлыком Applications.
 #
 # Подпись — ad-hoc (`codesign -s -`): нотаризации нет, при первом запуске
-# нужно «ПКМ → Открыть» либо `xattr -dr com.apple.quarantine /Applications/IIRobot.app`.
+# нужно «ПКМ → Открыть» либо `xattr -dr com.apple.quarantine /Applications/iiRobot.app`.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-APP="IIRobot"
+APP="iiRobot"
 VERSION="${VERSION:-1.0.0}"
 PY="${PYTHON:-python3}"
 BUILD="$ROOT/build/macos"
@@ -142,7 +142,7 @@ add_plist() {
     || /usr/libexec/PlistBuddy -c "Add :$1 $2 $3" "$PLIST"
 }
 add_plist NSMicrophoneUsageDescription string \
-  "IIRobot использует микрофон для локального голосового ввода."
+  "iiRobot использует микрофон для локального голосового ввода."
 add_plist NSHighResolutionCapable bool true
 add_plist LSMinimumSystemVersion string 12.0
 add_plist CFBundleShortVersionString string "$VERSION"
@@ -158,22 +158,22 @@ ok "Подписано (ad-hoc, без нотаризации)"
 
 # --------------------------------------------------------------------- dmg --
 STAGE="$BUILD/dmg"
-DMG="$DIST/IIRobot-$VERSION-macOS-$ARCH_LABEL.dmg"
+DMG="$DIST/iiRobot-$VERSION-macOS-$ARCH_LABEL.dmg"
 log "Сборка DMG"
 rm -rf "$STAGE" "$DMG"
 mkdir -p "$STAGE"
 cp -R "$APP_PATH" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
 cat > "$STAGE/Установка.txt" <<EOF
-IIRobot $VERSION для macOS ($ARCH_LABEL)
+iiRobot $VERSION для macOS ($ARCH_LABEL)
 
-1. Перетащите IIRobot в папку Applications.
-2. Первый запуск: ПКМ по IIRobot → «Открыть» → «Открыть».
+1. Перетащите iiRobot в папку Applications.
+2. Первый запуск: ПКМ по iiRobot → «Открыть» → «Открыть».
    (Приложение подписано ad-hoc и не нотаризовано Apple, поэтому
    двойной клик в первый раз может быть заблокирован Gatekeeper.)
    Альтернатива в терминале:
-     xattr -dr com.apple.quarantine /Applications/IIRobot.app
-3. Данные и настройки: ~/Library/Application Support/IIRobot
+     xattr -dr com.apple.quarantine /Applications/iiRobot.app
+3. Данные и настройки: ~/Library/Application Support/iiRobot
 4. При первом запуске приложение попросит доступ к микрофону.
 
 ffmpeg/ffprobe уже внутри приложения. Для локальной озвучки/LLM можно

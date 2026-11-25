@@ -7,13 +7,13 @@
 
 1. Мутабельные данные уходят в пользовательские каталоги:
    `~/.local/share/iirobot` / `~/.config/iirobot` (Linux, XDG) либо
-   `~/Library/Application Support/IIRobot` (macOS) — внутри бандла писать
+   `~/Library/Application Support/iiRobot` (macOS) — внутри бандла писать
    нельзя.
 2. GTK/WebKit (PyGObject) намеренно НЕ запаковываются в Linux-бинарник: в
    `sys.path` добавляется dist-packages системного Python, откуда берётся
    `gi`, а сами библиотеки GTK/WebKit ставятся пакетами ОС.
    На macOS pywebview работает через PyObjC и пакуется целиком.
-3. `IIRobot --iirobot-module passport_batch ...` — перезапуск самого себя
+3. `iiRobot --iirobot-module passport_batch ...` — перезапуск самого себя
    для отвязанных фоновых задач (PyInstaller кладёт модули в PYZ, а не в
    файлы .py, поэтому обычный `sys.executable <script.py>` не работает).
 4. Во bundled-каталоге `tools/` (рядом с исполняемым файлом) ищутся
@@ -33,7 +33,7 @@ MODULE_FLAG = "--iirobot-module"
 def _user_dirs() -> tuple[Path, Path]:
     home = Path.home()
     if sys.platform == "darwin":
-        base = home / "Library" / "Application Support" / "IIRobot"
+        base = home / "Library" / "Application Support" / "iiRobot"
         return base, base
     xdg_data = Path(os.environ.get("XDG_DATA_HOME") or (home / ".local" / "share"))
     xdg_conf = Path(os.environ.get("XDG_CONFIG_HOME") or (home / ".config"))

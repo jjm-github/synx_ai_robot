@@ -55,7 +55,7 @@ cd synx_ai_robot
 
 Скрипт ставит системные пакеты (GTK/WebKit, `ffmpeg`, `arecord`), создаёт
 `.venv`, ставит Python-зависимости, скачивает голосовые модели и создаёт
-ярлык IIRobot. ComfyUI устанавливается отдельно — приложение подключается к
+ярлык iiRobot. ComfyUI устанавливается отдельно — приложение подключается к
 нему по URL.
 
 Основные опции:
@@ -150,7 +150,7 @@ powershell -ExecutionPolicy Bypass -File .\install-windows.ps1
 .\install-windows.ps1 -NoShortcuts -SkipSystem
 ```
 
-Настройки и данные: `%APPDATA%\IIRobot` и `%LOCALAPPDATA%\IIRobot`.
+Настройки и данные: `%APPDATA%\iiRobot` и `%LOCALAPPDATA%\iiRobot`.
 ffmpeg и poppler (PDF-инструменты) скрипт ставит/скачивает автоматически.
 
 ### Windows — установщик .exe
@@ -162,7 +162,7 @@ winget install -e --id JRSoftware.InnoSetup
 powershell -ExecutionPolicy Bypass -File packaging\windows\build_windows.ps1
 ```
 
-Результат: `dist\IIRobot-1.0.0-Setup.exe`. В установщике есть галочки
+Результат: `dist\iiRobot-1.0.0-Setup.exe`. В установщике есть галочки
 «голосовые модели» и выбор LLM (`qwen3.5:4b`, `qwen2.5:7b`, обе).
 `build_windows.ps1` заранее скачивает Windows-wheels, Python 3.12 и
 ffmpeg/poppler, поэтому Python-зависимости ставятся из локальных wheel-файлов.
@@ -177,14 +177,14 @@ ffmpeg/poppler, поэтому Python-зависимости ставятся и
 VERSION=1.1.0 ARCH_LABEL=arm64 ./packaging/macos/build_macos.sh
 ```
 
-Результат: `dist/IIRobot-<version>-macOS-<arch>.dmg` — внутри `IIRobot.app`,
+Результат: `dist/iiRobot-<version>-macOS-<arch>.dmg` — внутри `iiRobot.app`,
 ffmpeg/ffprobe и ярлык Applications. Приложение собирается PyInstaller'ом
 (интерпретатор и зависимости внутри), подписывается ad-hoc и проверяется
 smoke-тестом (`--server-only` + `/api/health`). Нотаризации Apple нет, поэтому
 при первом запуске нужно «ПКМ → Открыть» (или
-`xattr -dr com.apple.quarantine /Applications/IIRobot.app`).
+`xattr -dr com.apple.quarantine /Applications/iiRobot.app`).
 
-Данные и настройки: `~/Library/Application Support/IIRobot`, лог
+Данные и настройки: `~/Library/Application Support/iiRobot`, лог
 `iirobot.log` там же. Голосовой ввод на macOS идёт через CoreAudio
 (`sounddevice`), при первом запуске система спросит доступ к микрофону.
 

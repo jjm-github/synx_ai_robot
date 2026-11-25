@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# IIRobot — automatic installer for Ubuntu / Linux Mint.
+# iiRobot — automatic installer for Ubuntu / Linux Mint.
 #
 # Core install: system packages, Python venv, app dependencies, desktop entry.
 # Optional: local voice models (~450 MB) and local LLM models for the voice
@@ -64,7 +64,7 @@ ask_yes_no() {
 
 usage() {
   cat <<'EOF'
-IIRobot installer (Ubuntu / Linux Mint)
+iiRobot installer (Ubuntu / Linux Mint)
 
 Использование: ./install.sh [опции]
 
@@ -445,7 +445,7 @@ fi
 
 # ------------------------------------------------------------- desktop ---
 if [ "$DESKTOP" = "ask" ]; then
-  ask_yes_no "Создать ярлык IIRobot и команду iirobot?" "yes"
+  ask_yes_no "Создать ярлык iiRobot и команду iirobot?" "yes"
   DESKTOP="$REPLY"
 fi
 if [ "$DESKTOP" = "yes" ]; then
@@ -456,8 +456,8 @@ if [ "$DESKTOP" = "yes" ]; then
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=IIRobot
-Comment=IIRobot — production assistant
+Name=iiRobot
+Comment=iiRobot — production assistant
 Exec=${APP_DIR}/run.sh
 Path=${APP_DIR}
 Icon=${APP_DIR}/static/app_icon.png
@@ -481,9 +481,9 @@ log "Готово."
 echo "  Приложение:      $APP_DIR"
 echo "  Запуск:          ${APP_DIR}/run.sh"
 if [ "$FROM_DEB" = "yes" ]; then
-  echo "  Или из меню:     IIRobot"
+  echo "  Или из меню:     iiRobot"
 else
-  echo "  Или из меню:     IIRobot / команда iirobot"
+  echo "  Или из меню:     iiRobot / команда iirobot"
 fi
 if [ "$VOICE_MODELS" = "yes" ]; then
   echo "  Голосовые модели: $(voice_dir)"

@@ -1,4 +1,4 @@
-﻿; IIRobot Windows installer (Inno Setup 6).
+﻿; iiRobot Windows installer (Inno Setup 6).
 ; Build on Windows with:
 ;   powershell -ExecutionPolicy Bypass -File packaging\windows\build_windows.ps1
 ;
@@ -11,18 +11,18 @@
 
 [Setup]
 AppId={{6D5B7E6E-4C1A-4F0B-9B5A-2E6B9A6F1C21}
-AppName=IIRobot
+AppName=iiRobot
 AppVersion={#MyAppVersion}
-AppPublisher=IIRobot
+AppPublisher=iiRobot
 AppPublisherURL=https://synks.ru
-DefaultDirName={localappdata}\Programs\IIRobot
-DefaultGroupName=IIRobot
+DefaultDirName={localappdata}\Programs\iiRobot
+DefaultGroupName=iiRobot
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
 OutputDir=..\..\dist
-OutputBaseFilename=IIRobot-{#MyAppVersion}-Setup
+OutputBaseFilename=iiRobot-{#MyAppVersion}-Setup
 SetupIconFile=..\..\static\app_icon.ico
 UninstallDisplayIcon={app}\static\app_icon.ico
 Compression=lzma2
@@ -45,8 +45,8 @@ Name: "llm"; Description: "Install Ollama and a local LLM model for voice correc
 Source: "..\..\build\windows\app\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\IIRobot"; Filename: "{app}\.venv\Scripts\pythonw.exe"; Parameters: """{app}\main.py"""; WorkingDir: "{app}"; IconFilename: "{app}\static\app_icon.ico"
-Name: "{autodesktop}\IIRobot"; Filename: "{app}\.venv\Scripts\pythonw.exe"; Parameters: """{app}\main.py"""; WorkingDir: "{app}"; IconFilename: "{app}\static\app_icon.ico"; Tasks: desktopicon
+Name: "{autoprograms}\iiRobot"; Filename: "{app}\.venv\Scripts\pythonw.exe"; Parameters: """{app}\main.py"""; WorkingDir: "{app}"; IconFilename: "{app}\static\app_icon.ico"
+Name: "{autodesktop}\iiRobot"; Filename: "{app}\.venv\Scripts\pythonw.exe"; Parameters: """{app}\main.py"""; WorkingDir: "{app}"; IconFilename: "{app}\static\app_icon.ico"; Tasks: desktopicon
 
 [Run]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install-windows.ps1"" -FromSetup -AppDir ""{app}"" -WheelsDir ""{app}\wheels"" -ToolsDir ""{app}\tools"" -PythonInstaller ""{app}\python-installer.exe"" -Llm ""{code:LlmMode}"" -VoiceModels ""{code:VoiceMode}"" -NoShortcuts -Unattended"; StatusMsg: "Installing Python runtime, dependencies and selected models..."; Flags: waituntilterminated

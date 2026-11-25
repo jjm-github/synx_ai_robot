@@ -1,7 +1,7 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-  Build the IIRobot Windows installer (IIRobot-<version>-Setup.exe).
+  Build the iiRobot Windows installer (iiRobot-<version>-Setup.exe).
 
 .DESCRIPTION
   Must be run on Windows x64 with Python 3.12 and Inno Setup 6 installed.
@@ -190,7 +190,7 @@ if (-not $iscc) {
 Log "Building installer with $iscc"
 & $iscc "/DMyAppVersion=$Version" (Join-Path $PSScriptRoot "iirobot.iss")
 if ($LASTEXITCODE -ne 0) { Fail "ISCC failed with code $LASTEXITCODE" }
-$out = Join-Path $Dist "IIRobot-$Version-Setup.exe"
+$out = Join-Path $Dist "iiRobot-$Version-Setup.exe"
 if (Test-Path $out) {
     Ok "Installer: $out ($([math]::Round((Get-Item $out).Length / 1MB, 1)) MB)"
 } else {

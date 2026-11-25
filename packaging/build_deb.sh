@@ -58,7 +58,7 @@ ok "Wheels: $(du -sh "$WHEELS" | cut -f1)"
 # ---------------------------------------------------------------- launcher --
 cat > "$PKGROOT/usr/bin/iirobot" <<'EOF'
 #!/bin/sh
-# IIRobot launcher: keep mutable data in the user's XDG directories.
+# iiRobot launcher: keep mutable data in the user's XDG directories.
 APP=/opt/iirobot
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}/iirobot"
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/iirobot"
@@ -74,7 +74,7 @@ chmod 755 "$PKGROOT/usr/bin/iirobot"
 
 cat > "$PKGROOT/usr/bin/iirobot-setup" <<'EOF'
 #!/bin/sh
-# Add voice models / local LLM models to an installed IIRobot.
+# Add voice models / local LLM models to an installed iiRobot.
 # Run WITHOUT sudo: the script asks for sudo only when it needs apt/Ollama.
 APP=/opt/iirobot
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}/iirobot"
@@ -93,8 +93,8 @@ cat > "$PKGROOT/usr/share/applications/iirobot.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=IIRobot
-Comment=IIRobot — production assistant
+Name=iiRobot
+Comment=iiRobot — production assistant
 Exec=/usr/bin/iirobot
 Icon=iirobot
 Terminal=false
@@ -114,9 +114,9 @@ Section: graphics
 Priority: optional
 Architecture: ${ARCH}
 Installed-Size: ${INSTALLED_SIZE}
-Maintainer: IIRobot <iirobot@localhost>
+Maintainer: iiRobot <iirobot@localhost>
 Depends: python3 (>= ${PYVER}), python3 (<< ${NEXTVER}), python3-venv, python3-setuptools, python3-pip, python3-gi, gir1.2-gtk-3.0, gir1.2-webkit2-4.1 | gir1.2-webkit2-4.0, libgtk-3-0 | libgtk-3-0t64, libwebkit2gtk-4.1-0 | libwebkit2gtk-4.0-37, ffmpeg, alsa-utils, xdg-utils, ca-certificates
-Description: IIRobot production assistant
+Description: iiRobot production assistant
  Native desktop assistant for synx production: chat, tasks, ComfyUI and
  local voice input. Installs the application into /opt/iirobot and keeps
  user data in ~/.local/share/iirobot and ~/.config/iirobot.
@@ -138,7 +138,7 @@ PY
         "$APP/.venv/bin/pip" install --no-index --find-links "$APP/wheels" \
             -r "$APP/requirements.txt" || \
         "$APP/.venv/bin/pip" install -r "$APP/requirements.txt" || \
-        echo "IIRobot: не удалось установить Python-зависимости; повтори: $APP/.venv/bin/pip install -r $APP/requirements.txt" >&2
+        echo "iiRobot: не удалось установить Python-зависимости; повтори: $APP/.venv/bin/pip install -r $APP/requirements.txt" >&2
     fi
 fi
 chmod +x /usr/bin/iirobot /usr/bin/iirobot-setup "$APP/run.sh" "$APP/install.sh" 2>/dev/null || true
