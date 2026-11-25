@@ -33,7 +33,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .sidebar {
   grid-column: 1; grid-row: 1; position: relative;
   background: var(--bg); border-right: 1px solid var(--line);
-  display: flex; flex-direction: column; padding: 15.3px 14px; min-height: 0;
+  display: flex; flex-direction: column; padding: 0 0 15.3px; min-height: 0;
   min-width: 0;
 }
 .sidebar-toggle {
@@ -52,7 +52,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .brand {
   position: relative;
   display: flex; flex-direction: column; align-items: center; gap: 2px;
-  width: 100%; padding: 8px 6px 10px; border-radius: 4px;
+  width: 100%; padding: 13.6px 14px 10.2px; border-radius: 0;
 }
 .brand::before {
   content: ""; position: absolute; inset: 0; z-index: 0;
@@ -71,7 +71,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .brand-title { font-weight: 700; font-size: 24.024px; line-height: 1; }
 .brand-sub { font-size: 13.86px; color: var(--muted); text-transform: uppercase; letter-spacing: 0; white-space: nowrap; }
-.nav { display: flex; flex-direction: column; gap: 3.4px; }
+.nav { display: flex; flex-direction: column; gap: 3.4px; padding: 0 14px; }
 .nav-btn {
   text-align: left; background: transparent; border: 0; color: var(--ink-soft);
   padding: 8.5px 12px; border-radius: 4px; cursor: pointer;
@@ -79,7 +79,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .nav-btn:hover { background: var(--hover); color: var(--text); }
 .nav-btn.active { background: var(--accent-soft); color: var(--accent-soft-ink); }
 .side-status { margin-top: auto; border-top: 1px solid var(--line); padding: 11.9px 6px 0; display: grid; gap: 6.8px; }
-.side-bottom { margin-top: auto; display: flex; flex-direction: column; gap: 3.4px; }
+.side-bottom { margin-top: auto; display: flex; flex-direction: column; gap: 3.4px; padding: 0 14px; }
 .status-line { display: flex; align-items: center; gap: 6.8px; color: var(--muted); font-size: 12px; }
 .side-meta { font-size: 11px; color: var(--ink-soft); word-break: break-word; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); box-shadow: 0 0 0 3px color-mix(in srgb, var(--line) 15%, transparent); }
@@ -106,13 +106,15 @@ button, input, select, textarea { font: inherit; color: inherit; }
   margin-left: auto; font-size: 11px; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis;
 }
-.topbar { display: flex; justify-content: space-between; gap: 13.6px; align-items: center; padding: 15.3px 22px 11.9px; border-bottom: 1px solid var(--line); }
+.topbar { display: flex; justify-content: flex-end; gap: 13.6px; align-items: center; padding: 4.25px 12px; border-bottom: 1px solid var(--line); }
 .topbar h1 { font-size: 21px; margin: 0 0 2.55px; }
 .muted { color: var(--muted); font-size: 12px; }
-.top-actions { display: flex; gap: 6.8px; flex-wrap: wrap; }
+.top-actions { display: flex; gap: 6.8px; flex-wrap: wrap; align-items: center; }
 .chat-top-action.hidden { display: none; }
 .view { display: none; min-height: 0; overflow: auto; padding: 13.6px 22px 20.4px; }
 .view.active { display: flex; flex-direction: column; gap: 10.2px; }
+#view-chat { padding: 0; overflow: hidden; }
+#view-chat.active { gap: 0; }
 
 .btn {
   border: 1px solid var(--line2); background: var(--field-bg); color: var(--ink);
@@ -269,7 +271,7 @@ textarea.input { resize: vertical; min-height: 220px; }
 .markdown-body hr { border: 0; border-top: 1px solid var(--line); margin: 1.02em 0; }
 
 /* chat */
-.chat-shell { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; height: calc(100vh - 150px); border: 1px solid var(--line); border-radius: 6px; background: var(--panel); overflow: hidden; }
+.chat-shell { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; background: var(--panel); overflow: hidden; }
 .chat-top { position: relative; flex: 0 0 auto; border-bottom: 1px solid var(--line); background: var(--panel); }
 .chat-tabbar { display: flex; align-items: center; gap: 4px; padding: 6px 8px 0; }
 .chat-tabs { display: flex; align-items: flex-end; gap: 2px; flex: 1 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; }
@@ -315,6 +317,7 @@ textarea.chat-input {
 .chat-input-tools {
   position: absolute; left: 4px; bottom: 4px; display: flex; align-items: center; gap: 4px; z-index: 4;
 }
+.chat-input-tools.right { left: auto; right: 4px; justify-content: flex-end; }
 .chat-tool {
   width: 24px; height: 24px; padding: 0; border: 1px solid var(--line2); border-radius: 5px;
   background: var(--field-bg); color: var(--ink); cursor: pointer;

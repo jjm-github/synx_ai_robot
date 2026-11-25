@@ -65,8 +65,10 @@
       chat: ["Чат", "Диалог с моделью, референсы и генерация изображений в ComfyUI"],
       settings: ["Настройки", "AI, synx, ComfyUI, боты и системный промпт"]
     };
-    $("view-title").textContent = titles[v][0];
-    $("view-subtitle").textContent = titles[v][1];
+    var titleEl = $("view-title");
+    var subtitleEl = $("view-subtitle");
+    if (titleEl) titleEl.textContent = titles[v][0];
+    if (subtitleEl) subtitleEl.textContent = titles[v][1];
     if (v === "tasks") loadTasks();
     if (v === "chat") loadChat();
     if (v === "settings") loadSettings();

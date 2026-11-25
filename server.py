@@ -35,7 +35,7 @@ from chat import (IMAGES as CHAT_IMAGES, UPLOADS as CHAT_UPLOADS,
 from pipeline import manager
 from synx import SynxClient
 
-app = FastAPI(title="IIRobot", version="0.1.0")
+app = FastAPI(title="iiRobot", version="0.1.0")
 
 
 @app.middleware("http")

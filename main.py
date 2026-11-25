@@ -180,7 +180,7 @@ def main() -> int:
 
     if args.server_only:
         wait_server(url)
-        print(f"IIRobot server: {url}")
+        print(f"iiRobot server: {url}")
         try:
             while True:
                 time.sleep(1)
@@ -199,7 +199,7 @@ def main() -> int:
         )
     width = int(cfg.get("ui", {}).get("window_width", 1500))
     height = int(cfg.get("ui", {}).get("window_height", 960))
-    webview.create_window("IIRobot", url, width=width, height=height,
+    webview.create_window("iiRobot", url, width=width, height=height,
                           min_size=(1100, 700), confirm_close=True, js_api=DesktopApi())
     gui = "gtk" if platform.system() == "Linux" and importlib.util.find_spec("gi") else None
     if gui:

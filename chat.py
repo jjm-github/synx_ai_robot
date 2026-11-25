@@ -42,7 +42,7 @@ IMAGES = CHAT_DIR / "images"
 for _p in (UPLOADS, IMAGES):
     _p.mkdir(parents=True, exist_ok=True)
 
-CHAT_SYSTEM = """Ты — ассистент IIRobot. Отвечай по-русски, кратко и по делу.
+CHAT_SYSTEM = """Ты — ассистент iiRobot. Отвечай по-русски, кратко и по делу.
 
 Ты умеешь:
 - отвечать на вопросы о производстве, synx, версиях, задачах, проектах, ComfyUI и промптах;

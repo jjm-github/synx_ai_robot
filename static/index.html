@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>IIRobot</title>
+  <title>iiRobot</title>
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/theme.js"></script>
 </head>
@@ -14,7 +14,7 @@
     <div class="brand">
       <div class="brand-row">
         <span class="brand-logo" role="img" aria-label="Synx"></span>
-        <div class="brand-title">IIRobot</div>
+        <div class="brand-title">iiRobot</div>
       </div>
       <div class="brand-sub">production assistant</div>
     </div>
@@ -30,10 +30,6 @@
 
   <main class="main">
     <header class="topbar">
-      <div>
-        <h1 id="view-title">Чат</h1>
-        <div class="muted" id="view-subtitle">Диалог с моделью, референсы и генерация изображений в ComfyUI</div>
-      </div>
       <div class="top-actions">
         <button class="btn chat-top-action" id="chat-folders">Рабочие папки</button>
         <button class="btn chat-top-action" id="chat-clear">Очистить</button>
@@ -114,6 +110,8 @@
             <textarea class="input chat-input" id="chat-input" rows="3" placeholder="Напиши вопрос или попроси: «нарисуй ... по этим референсам»"></textarea>
             <div class="chat-input-tools">
               <button class="chat-tool" id="chat-attach" type="button" title="Прикрепить референс">+</button>
+            </div>
+            <div class="chat-input-tools right">
               <button class="chat-tool voice-btn hidden" id="voice-btn" type="button" title="Голосовой ввод: удерживайте">
                 <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 0 0 3.5-3.5V6a3.5 3.5 0 1 0-7 0v6a3.5 3.5 0 0 0 3.5 3.5Zm6-3.5a6 6 0 0 1-12 0M12 18v3m-3 0h6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
               </button>
