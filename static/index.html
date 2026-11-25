@@ -35,6 +35,8 @@
         <div class="muted" id="view-subtitle">Диалог с моделью, референсы и генерация изображений в ComfyUI</div>
       </div>
       <div class="top-actions">
+        <button class="btn chat-top-action" id="chat-folders">Рабочие папки</button>
+        <button class="btn chat-top-action" id="chat-clear">Очистить</button>
         <span class="zoom-control" title="Масштаб интерфейса (Ctrl + колесо)">
           <button class="btn" id="zoom-out" type="button">−</button>
           <span id="zoom-value">100%</span>
@@ -88,16 +90,19 @@
 
     <section class="view active" id="view-chat">
       <div class="chat-shell">
-        <div class="chat-head">
-          <div>
-            <div class="chat-title">Чат с моделью</div>
-            <div class="muted">Можно прикреплять референсы и просить сгенерировать изображение в ComfyUI.</div>
+        <div class="chat-top">
+          <div class="chat-tabbar">
+            <div class="chat-tabs" id="chat-tabs"></div>
+            <button class="chat-tab-add" id="chat-tab-add" type="button" title="Новый чат">+</button>
+            <button class="chat-more" id="chat-more" type="button" title="Ещё">…</button>
           </div>
-          <div class="chat-head-actions">
-            <select class="input" id="chat-session"></select>
-            <button class="btn" id="chat-folders">Рабочие папки</button>
-            <button class="btn" id="chat-new">Новый чат</button>
-            <button class="btn" id="chat-clear">Очистить</button>
+          <div class="chat-menu hidden" id="chat-menu">
+            <label class="chat-menu-check" title="Локальный голосовой ввод">
+              <input type="checkbox" id="voice-enabled"> Голосовой ввод
+            </label>
+            <button type="button" id="chat-export">Экспорт .md</button>
+            <button type="button" id="chat-context">Контекст .md</button>
+            <input type="file" id="chat-context-file" accept=".md,.txt" hidden>
           </div>
         </div>
         <div class="chat-messages" id="chat-messages"></div>
@@ -105,18 +110,19 @@
         <div class="chat-composer" id="chat-composer">
           <div class="drop-caret hidden" id="drop-caret"><span>вставить здесь</span></div>
           <div class="chat-chips" id="chat-chips"></div>
-          <textarea class="input chat-input" id="chat-input" rows="3" placeholder="Напиши вопрос или попроси: «нарисуй ... по этим референсам»"></textarea>
-          <div class="chat-actions">
-            <label class="btn attach-btn" title="Прикрепить референс любого типа: изображение, PDF, видео, .md, .json и т. д.">+ Референс<input type="file" id="chat-files" multiple hidden></label>
-            <button class="btn voice-btn hidden" id="voice-btn" title="Голосовой ввод: удерживайте для произнесения текста">Нажмите</button>
-            <label class="check inline-check voice-toggle" title="Локальный голосовой ввод (T-one + GigaAM)"><input type="checkbox" id="voice-enabled"> голос</label>
-            <button class="btn primary" id="chat-send">Отправить</button>
-            <span class="muted" id="chat-hint">Enter — отправить, Shift+Enter — новая строка</span>
-            <span class="chat-actions-spacer"></span>
-            <button class="btn" id="chat-export">Экспорт .md</button>
-            <button class="btn" id="chat-context">Контекст .md</button>
-            <input type="file" id="chat-context-file" accept=".md,.txt" hidden>
+          <div class="chat-input-wrap">
+            <textarea class="input chat-input" id="chat-input" rows="3" placeholder="Напиши вопрос или попроси: «нарисуй ... по этим референсам»"></textarea>
+            <div class="chat-input-tools">
+              <button class="chat-tool" id="chat-attach" type="button" title="Прикрепить референс">+</button>
+              <button class="chat-tool voice-btn hidden" id="voice-btn" type="button" title="Голосовой ввод: удерживайте">
+                <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 0 0 3.5-3.5V6a3.5 3.5 0 1 0-7 0v6a3.5 3.5 0 0 0 3.5 3.5Zm6-3.5a6 6 0 0 1-12 0M12 18v3m-3 0h6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+              </button>
+              <button class="chat-tool chat-send" id="chat-send" type="button" title="Отправить (Enter)">
+                <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M12 19V5m0 0-6 6m6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+            </div>
           </div>
+          <input type="file" id="chat-files" multiple hidden>
         </div>
       </div>
     </section>

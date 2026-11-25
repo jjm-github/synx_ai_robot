@@ -58,6 +58,8 @@
     state.view = v;
     document.querySelectorAll(".nav-btn").forEach(function (b) { b.classList.toggle("active", b.dataset.view === v); });
     document.querySelectorAll(".view").forEach(function (x) { x.classList.toggle("active", x.id === "view-" + v); });
+    document.querySelectorAll(".chat-top-action").forEach(function (x) { x.classList.toggle("hidden", v !== "chat"); });
+    if (v !== "chat") $("chat-menu").classList.add("hidden");
     var titles = {
       tasks: ["Задачи", "Очередь производства и этапы выполнения"],
       chat: ["Чат", "Диалог с моделью, референсы и генерация изображений в ComfyUI"],
@@ -222,6 +224,34 @@
     }
     chatScrollPositions[chatSession] = box.scrollTop;
   }
+  function renderChatTabs(sessions) {
+    var box = $("chat-tabs");
+    if (!box) return;
+    box.innerHTML = "";
+    sessions.forEach(function (s) {
+      var tab = document.createElement("div");
+      tab.className = "chat-tab" + (s.id === chatSession ? " active" : "");
+      tab.dataset.session = s.id;
+      var close = document.createElement("button");
+      close.type = "button";
+      close.className = "chat-tab-close";
+      close.textContent = "×";
+      close.title = "Закрыть чат";
+      close.dataset.close = s.id;
+      var name = document.createElement("span");
+      name.className = "chat-tab-name";
+      name.textContent = s.title || "Чат";
+      name.title = s.title || "Чат";
+      tab.appendChild(close);
+      tab.appendChild(name);
+      box.appendChild(tab);
+    });
+  }
+  function markActiveTab() {
+    document.querySelectorAll("#chat-tabs .chat-tab").forEach(function (tab) {
+      tab.classList.toggle("active", tab.dataset.session === chatSession);
+    });
+  }
   async function loadChatSessions(preferred) {
     try {
       var d = await api("/api/chat/sessions");
@@ -232,11 +262,35 @@
       }
       if (preferred) chatSession = preferred;
       if (!sessions.some(function (s) { return s.id === chatSession; })) chatSession = sessions[0].id;
-      var sel = $("chat-session"); sel.innerHTML = "";
-      sessions.forEach(function (s) {
-        var o = document.createElement("option"); o.value = s.id; o.textContent = s.title; o.selected = s.id === chatSession; sel.appendChild(o);
-      });
+      renderChatTabs(sessions);
     } catch (e) { toast("Сессии чата: " + e.message, true); }
+  }
+  async function newChatSession() {
+    var title = "Чат " + new Date().toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+    try {
+      var d = await api("/api/chat/sessions", { method: "POST", body: JSON.stringify({ title: title }) });
+      chatSession = d.session.id;
+      await loadChatSessions(chatSession);
+      await loadChat();
+    } catch (e) { toast("Новый чат: " + e.message, true); }
+  }
+  async function closeChatSession(sid) {
+    var wasActive = chatSession === sid;
+    var job = chatJobs[sid];
+    if (job && job.id) {
+      try { await api("/api/chat/jobs/" + encodeURIComponent(job.id) + "/stop", { method: "POST" }); }
+      catch (e) { /* continue closing */ }
+    }
+    try {
+      await api("/api/chat/sessions/" + encodeURIComponent(sid), { method: "DELETE" });
+    } catch (e) {
+      toast("Закрыть чат: " + e.message, true);
+      return;
+    }
+    delete chatJobs[sid];
+    delete chatScrollPositions[sid];
+    await loadChatSessions(wasActive ? null : chatSession);
+    if (wasActive) await loadChat();
   }
   async function loadChat() {
     try {
@@ -598,7 +652,7 @@
   function currentChatJob() { return chatJobs[chatSession] || null; }
   function setChatRunning(on) {
     $("chat-send").disabled = !!on;
-    $("chat-send").textContent = on ? "Думаю..." : "Отправить";
+    $("chat-send").title = on ? "Думаю…" : "Отправить (Enter)";
     var stop = $("chat-stop");
     if (stop) stop.classList.toggle("hidden", !on);
   }
@@ -748,12 +802,24 @@
     }
   }
   // ---------- local voice input (hold to talk) ----------
+  var VOICE_MIC_SVG = '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 0 0 3.5-3.5V6a3.5 3.5 0 1 0-7 0v6a3.5 3.5 0 0 0 3.5 3.5Zm6-3.5a6 6 0 0 1-12 0M12 18v3m-3 0h6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+  function voiceIcon(mode) {
+    var btn = $("voice-btn");
+    if (!btn) return;
+    btn.classList.toggle("recording", mode === "recording");
+    btn.classList.toggle("thinking", mode === "thinking");
+    btn.innerHTML = VOICE_MIC_SVG;
+    btn.disabled = mode === "thinking";
+    btn.title = mode === "thinking" ? "Идёт коррекция текста…" :
+      (mode === "recording" ? "Говорите…" : "Голосовой ввод: удерживайте");
+  }
   var voiceState = {enabled: false, recording: false, thinking: false,
                     polling: null, before: "", after: "", dotTimer: null, dotIndex: 0};
   function voiceUi() {
     var on = voiceState.enabled;
     $("voice-enabled").checked = on;
     $("voice-btn").classList.toggle("hidden", !on);
+    if (on && !voiceState.recording && !voiceState.thinking) voiceIcon("idle");
   }
   async function loadVoiceStatus() {
     try {
@@ -777,19 +843,12 @@
   }
   function voiceStartDots() {
     voiceStopDots();
-    var seq = [1, 2, 3, 4, 5, 4, 3, 2];
-    voiceState.dotIndex = 0;
-    $("voice-btn").textContent = "Думаю.";
-    voiceState.dotTimer = setInterval(function () {
-      voiceState.dotIndex = (voiceState.dotIndex + 1) % seq.length;
-      $("voice-btn").textContent = "Думаю" + ".".repeat(seq[voiceState.dotIndex]);
-    }, 100);
+    voiceIcon("thinking");
   }
   function voiceRestoreButton() {
     voiceStopDots();
     voiceState.thinking = false;
-    $("voice-btn").classList.remove("recording", "thinking");
-    $("voice-btn").textContent = "Нажмите";
+    voiceIcon("idle");
     $("chat-input").readOnly = false;
   }
   async function voiceStart() {
@@ -801,9 +860,7 @@
     voiceState.after = ta.value.slice(end);
     voiceState.recording = true;
     ta.readOnly = true;
-    $("voice-btn").classList.remove("thinking");
-    $("voice-btn").classList.add("recording");
-    $("voice-btn").textContent = "Говорите";
+    voiceIcon("recording");
     try {
       var d = await api("/api/voice/start", {method: "POST"});
       if (d.error) throw new Error(d.error);
@@ -828,8 +885,6 @@
     voiceState.recording = false;
     voiceState.thinking = true;
     if (voiceState.polling) { clearInterval(voiceState.polling); voiceState.polling = null; }
-    $("voice-btn").classList.remove("recording");
-    $("voice-btn").classList.add("thinking");
     voiceStartDots();
     var ta = $("chat-input");
     try {
@@ -907,22 +962,37 @@
     }, 0);
   }
   $("chat-folders").addEventListener("click", openFoldersModal);
-  $("chat-session").addEventListener("change", function () {
+  $("chat-tabs").addEventListener("click", function (e) {
+    var close = e.target.closest("[data-close]");
+    if (close) {
+      e.stopPropagation();
+      closeChatSession(close.dataset.close);
+      return;
+    }
+    var tab = e.target.closest(".chat-tab");
+    if (!tab || tab.dataset.session === chatSession) return;
     chatScrollPositions[chatSession] = $("chat-messages").scrollTop;
-    chatSession = this.value;
+    chatSession = tab.dataset.session;
+    markActiveTab();
     syncChatUi();
     loadChat();
   });
+  $("chat-tab-add").addEventListener("click", newChatSession);
+  $("chat-more").addEventListener("click", function (e) {
+    e.stopPropagation();
+    $("chat-menu").classList.toggle("hidden");
+  });
+  document.addEventListener("click", function (e) {
+    if (!$("chat-menu").contains(e.target) && e.target !== $("chat-more")) {
+      $("chat-menu").classList.add("hidden");
+    }
+  });
+  $("chat-menu").addEventListener("click", function (e) {
+    if (e.target.closest("button")) $("chat-menu").classList.add("hidden");
+  });
+  $("chat-attach").addEventListener("click", function () { $("chat-files").click(); });
   $("chat-messages").addEventListener("scroll", function () {
     chatScrollPositions[chatSession] = this.scrollTop;
-  });
-  $("chat-new").addEventListener("click", async function () {
-    var title = "Чат " + new Date().toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
-    try {
-      var d = await api("/api/chat/sessions", { method: "POST", body: JSON.stringify({ title: title }) });
-      await loadChatSessions(d.session.id);
-      await loadChat();
-    } catch (e) { toast(e.message, true); }
   });
   function copyText(text) {
     if (!text) return;
